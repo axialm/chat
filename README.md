@@ -1,7 +1,7 @@
 ***PROPRIETARY SOURCE CODE LICENSE & NON-DISCLOSURE AGREEMENT***
 
 *1. OWNERSHIP AND COPYRIGHT*
-All source code, assets, logic, and documentation within this repository (collectively, "the Software") are the exclusive intellectual property of [YOUR NAME/ENTITY] ("the Owner"). The Software is protected by international copyright laws and treaties. All rights are strictly reserved.
+All source code, assets, logic, and documentation within this repository (collectively, "the Software") are the exclusive intellectual property of AxiaLM ("the Owner"). The Software is protected by international copyright laws and treaties. All rights are strictly reserved.
 
 *2. ABSOLUTE PROHIBITION OF USE*
 No person, entity, or automated system (including but not limited to AI training models or crawlers) is granted any license to use, run, compile, or execute the Software for any purpose, whether commercial, personal, or educational, without express written consent from the Owner.
