@@ -12,6 +12,8 @@
         }
     </script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- ONNX Runtime Web (WebGPU + WASM backends) -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.all.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 
@@ -102,6 +104,19 @@
     </style>
 </head>
 <body class="h-screen w-full flex overflow-hidden bg-[#fcfbf9] dark:bg-[#1a1a1a] text-gray-800 dark:text-gray-200">
+
+    <!-- Model Loading Overlay -->
+    <div id="model-overlay" class="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-[#fcfbf9] dark:bg-[#1a1a1a] transition-opacity duration-500">
+        <div class="w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center mb-6 shadow-md border border-gray-200 dark:border-[#333] bg-white dark:bg-[#252525]">
+            <img src="logo.png" alt="AxiaLM Logo" class="w-full h-full object-cover">
+        </div>
+        <h2 class="text-2xl font-semibold text-gradient mb-2">Loading AxiaLM-1</h2>
+        <p id="model-status" class="text-sm text-gray-500 dark:text-gray-400 mb-8">Initialising...</p>
+        <div class="w-64 bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+            <div id="model-progress-bar" class="bg-indigo-500 h-full rounded-full transition-all duration-300" style="width:0%"></div>
+        </div>
+        <p id="model-progress-label" class="text-xs text-gray-400 mt-3 font-mono">0%</p>
+    </div>
 
     <!-- Sidebar -->
     <aside id="sidebar" class="w-64 bg-[#f3f2ee] dark:bg-[#202020] border-r border-[#e6e4df] dark:border-[#333] flex flex-col hidden md:flex transition-all duration-300 z-20 shrink-0">
@@ -268,6 +283,384 @@
     </div>
 
     <script>
+        // ═══════════════════════════════════════════════════════════════════
+        // AxiaLM-1 ONNX Inference Engine
+        // ═══════════════════════════════════════════════════════════════════
+
+        // ── Config — paths to model files (relative to index.html) ───────────
+        const MODEL_URL  = './model/axialm1_int8.onnx';
+        const TOK_URL    = './model/tokenizer.json';
+        const CONFIG_URL = './model/config.json';
+
+        // Special token ids (populated after tokenizer loads)
+        let TOK_BOS, TOK_EOS, TOK_SEP, TOK_SYS, TOK_PAD;
+        const SYSTEM_PROMPT =
+            "You are AxiaLM-1, a helpful and friendly AI assistant. " +
+            "You are a small language model with limitations — you may not always be " +
+            "accurate, and you should say so when unsure rather than guessing confidently. " +
+            "Be concise, honest, and conversational. " +
+            "Format your responses using simple HTML: use <p> for paragraphs, " +
+            "<ol> with <li> for numbered lists, <ul> with <li> for bullet lists, " +
+            "and <strong> for bold emphasis. Always wrap your response in at least " +
+            "one <p> tag. Do not use markdown.";
+
+        // Generation config
+        const GEN_MAX_NEW   = 200;
+        const GEN_TEMP      = 0.75;
+        const GEN_TOP_K     = 40;
+        const GEN_TOP_P     = 0.90;
+        const MAX_CTX       = 1024;
+
+        // Runtime state
+        let ortSession  = null;
+        let tokenizerData = null;   // raw JSON from tokenizer.json
+        let modelConfig = null;
+        let isModelReady = false;
+        let conversationHistory = [];   // {role, content}[] for current chat
+
+        // ── Simple BPE tokenizer implemented in JS ──────────────────────────
+        // We implement just enough of the HuggingFace BPE spec to encode/decode
+        // without needing a WASM tokenizer package.
+        class BPETokenizer {
+            constructor(tokData) {
+                this.vocab    = tokData.model.vocab;           // token -> id
+                this.merges   = tokData.model.merges;          // ["ab cd", ...]
+                this.invVocab = Object.fromEntries(Object.entries(this.vocab).map(([k,v]) => [v,k]));
+                this.specialTokens = {};
+                for (const st of (tokData.added_tokens || [])) {
+                    this.specialTokens[st.content] = st.id;
+                    this.invVocab[st.id] = st.content;
+                }
+                // Build merge lookup: "a b" -> priority index
+                this.mergeRank = {};
+                this.merges.forEach((m, i) => { this.mergeRank[m] = i; });
+            }
+
+            // Byte-level pre-tokenization (matches ByteLevel in HuggingFace)
+            _byteEncode(str) {
+                const BS = BPETokenizer._byteSymbols();
+                return [...new TextEncoder().encode(str)].map(b => BS[b]).join('');
+            }
+
+            static _byteSymbols() {
+                if (BPETokenizer.__bs) return BPETokenizer.__bs;
+                // Matches GPT-2 byte-to-unicode mapping
+                const bs = [];
+                const cs = [];
+                let n = 0;
+                for (let b = 0; b < 256; b++) {
+                    const inRange = (b >= 33 && b <= 126) || (b >= 161 && b <= 172) || (b >= 174 && b <= 255);
+                    bs.push(b);
+                    cs.push(inRange ? b : 256 + n++);
+                }
+                BPETokenizer.__bs = {};
+                bs.forEach((b, i) => { BPETokenizer.__bs[b] = String.fromCodePoint(cs[i]); });
+                return BPETokenizer.__bs;
+            }
+
+            _bpeMerge(chars) {
+                let word = chars;
+                while (word.length > 1) {
+                    let bestRank = Infinity, bestIdx = -1;
+                    for (let i = 0; i < word.length - 1; i++) {
+                        const pair = word[i] + ' ' + word[i+1];
+                        const rank = this.mergeRank[pair];
+                        if (rank !== undefined && rank < bestRank) {
+                            bestRank = rank; bestIdx = i;
+                        }
+                    }
+                    if (bestIdx === -1) break;
+                    const merged = word[bestIdx] + word[bestIdx+1];
+                    word = [...word.slice(0, bestIdx), merged, ...word.slice(bestIdx+2)];
+                }
+                return word;
+            }
+
+            encode(text, addPrefixSpace = true) {
+                const ids = [];
+                // Handle special tokens first
+                const specials = Object.keys(this.specialTokens);
+                // Simple split on special tokens
+                const parts = [text];  // could split on specials but our text won't contain them
+                for (const part of parts) {
+                    const prefixed = addPrefixSpace ? 'Ġ' + part : part;  // Ġ = space in byte-level
+                    // Actually use proper byte encoding
+                    const byteStr  = this._byteEncode(addPrefixSpace ? ' ' + part : part);
+                    const chars    = [...byteStr];
+                    const tokens   = this._bpeMerge(chars);
+                    for (const t of tokens) {
+                        const id = this.vocab[t];
+                        if (id !== undefined) ids.push(id);
+                    }
+                }
+                return ids;
+            }
+
+            encodeSpecial(tokenStr) {
+                return this.specialTokens[tokenStr] ?? this.vocab[tokenStr] ?? 0;
+            }
+
+            decode(ids) {
+                const BS_INV = BPETokenizer._buildInvByteSymbols();
+                const tokens = ids.map(id => this.invVocab[id] || '').join('');
+                // Decode byte-level back to UTF-8
+                const bytes = [...tokens].map(ch => BS_INV[ch] ?? ch.charCodeAt(0));
+                try {
+                    return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
+                } catch { return tokens; }
+            }
+
+            static _buildInvByteSymbols() {
+                if (BPETokenizer.__bsInv) return BPETokenizer.__bsInv;
+                const fwd = BPETokenizer._byteSymbols();
+                BPETokenizer.__bsInv = {};
+                for (const [byte, sym] of Object.entries(fwd)) {
+                    BPETokenizer.__bsInv[sym] = parseInt(byte);
+                }
+                return BPETokenizer.__bsInv;
+            }
+        }
+
+        let tokenizer = null;
+
+        // ── Progress UI helpers ─────────────────────────────────────────────
+        function setProgress(pct, msg) {
+            document.getElementById('model-progress-bar').style.width = pct + '%';
+            document.getElementById('model-progress-label').textContent = Math.round(pct) + '%';
+            document.getElementById('model-status').textContent = msg;
+        }
+
+        async function fetchWithProgress(url, label) {
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`Failed to fetch ${label}: ${resp.status} ${resp.statusText}`);
+            const total  = parseInt(resp.headers.get('content-length') || '0');
+            const reader = resp.body.getReader();
+            const chunks = [];
+            let received = 0;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                received += value.length;
+                if (total > 0) {
+                    // Progress is reported by the caller, just collect bytes here
+                }
+            }
+            const all = new Uint8Array(received);
+            let pos = 0;
+            for (const chunk of chunks) { all.set(chunk, pos); pos += chunk.length; }
+            return all.buffer;
+        }
+
+        // ── Model loading ───────────────────────────────────────────────────
+        async function loadModel() {
+            const overlay = document.getElementById('model-overlay');
+            try {
+                setProgress(5, 'Fetching model config...');
+                const cfgResp = await fetch(CONFIG_URL);
+                if (!cfgResp.ok) throw new Error(`Config fetch failed: ${cfgResp.status}`);
+                modelConfig = await cfgResp.json();
+
+                setProgress(10, 'Fetching tokenizer...');
+                const tokResp = await fetch(TOK_URL);
+                if (!tokResp.ok) throw new Error(`Tokenizer fetch failed: ${tokResp.status}`);
+                tokenizerData = await tokResp.json();
+                tokenizer = new BPETokenizer(tokenizerData);
+
+                // Resolve special token ids
+                TOK_BOS = tokenizer.encodeSpecial('[BOS]');
+                TOK_EOS = tokenizer.encodeSpecial('[EOS]');
+                TOK_SEP = tokenizer.encodeSpecial('[SEP]');
+                TOK_SYS = tokenizer.encodeSpecial('[SYS]');
+                TOK_PAD = tokenizer.encodeSpecial('[PAD]');
+                console.log('[AxiaLM] Special tokens:', { TOK_BOS, TOK_EOS, TOK_SEP, TOK_SYS, TOK_PAD });
+
+                setProgress(15, 'Downloading model (this may take a moment)...');
+
+                // Stream model with progress
+                const modelResp = await fetch(MODEL_URL);
+                if (!modelResp.ok) throw new Error(`Model fetch failed: ${modelResp.status} — is axialm1_int8.onnx in the model/ folder?`);
+                const total  = parseInt(modelResp.headers.get('content-length') || '0');
+                const reader = modelResp.body.getReader();
+                const chunks = [];
+                let received = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    received += value.length;
+                    if (total > 0) {
+                        const pct = 15 + (received / total) * 70;
+                        setProgress(pct, `Downloading model... ${(received/1e6).toFixed(1)} / ${(total/1e6).toFixed(1)} MB`);
+                    }
+                }
+                const modelBuffer = new Uint8Array(received);
+                let pos = 0;
+                for (const chunk of chunks) { modelBuffer.set(chunk, pos); pos += chunk.length; }
+
+                setProgress(87, 'Initialising ONNX Runtime...');
+
+                // Try WebGPU first, fall back to WASM
+                let providers = ['wasm'];
+                try {
+                    const adapter = await navigator.gpu?.requestAdapter();
+                    if (adapter) providers = ['webgpu', 'wasm'];
+                } catch {}
+
+                ort.env.wasm.numThreads = Math.max(1, (navigator.hardwareConcurrency || 2) - 1);
+                ort.env.wasm.simd = true;
+
+                setProgress(92, `Creating session (backend: ${providers[0]})...`);
+                ortSession = await ort.InferenceSession.create(modelBuffer.buffer, {
+                    executionProviders: providers,
+                    graphOptimizationLevel: 'all',
+                });
+
+                setProgress(100, 'Ready!');
+                isModelReady = true;
+                console.log('[AxiaLM] Model ready. Inputs:', ortSession.inputNames, 'Outputs:', ortSession.outputNames);
+
+                // Fade out overlay
+                setTimeout(() => {
+                    overlay.style.opacity = '0';
+                    setTimeout(() => overlay.style.display = 'none', 500);
+                }, 400);
+
+            } catch (err) {
+                console.error('[AxiaLM] Load error:', err);
+                setProgress(0, '');
+                document.getElementById('model-status').innerHTML =
+                    `<span class="text-red-500">Failed to load model: ${err.message}</span><br>` +
+                    `<span class="text-xs text-gray-400 mt-2 block">Make sure model/axialm1_int8.onnx, model/tokenizer.json and model/config.json exist in your repo.</span>`;
+            }
+        }
+
+        // ── Sampling helpers ────────────────────────────────────────────────
+        function topKFilter(logits, k) {
+            const sorted = [...logits].map((v,i) => [v,i]).sort((a,b) => b[0]-a[0]);
+            const threshold = sorted[Math.min(k-1, sorted.length-1)][0];
+            return logits.map(v => v >= threshold ? v : -Infinity);
+        }
+
+        function softmax(logits) {
+            const max = Math.max(...logits);
+            const exp = logits.map(v => Math.exp(v - max));
+            const sum = exp.reduce((a,b) => a+b, 0);
+            return exp.map(v => v/sum);
+        }
+
+        function topPSample(probs, p) {
+            const indexed = probs.map((v,i) => [v,i]).sort((a,b) => b[0]-a[0]);
+            let cum = 0;
+            const filtered = [];
+            for (const [prob, idx] of indexed) {
+                filtered.push([prob, idx]);
+                cum += prob;
+                if (cum >= p) break;
+            }
+            const total = filtered.reduce((s,[v]) => s+v, 0);
+            const norm  = filtered.map(([v,i]) => [v/total, i]);
+            const r = Math.random();
+            let acc = 0;
+            for (const [prob, idx] of norm) {
+                acc += prob;
+                if (r <= acc) return idx;
+            }
+            return norm[norm.length-1][1];
+        }
+
+        function sample(logitsArr, temp, topK, topP) {
+            // Apply temperature
+            let scaled = logitsArr.map(v => v / temp);
+            // Top-K
+            if (topK > 0) scaled = topKFilter(scaled, topK);
+            // Softmax
+            const probs = softmax(scaled);
+            // Top-P sample
+            return topPSample(probs, topP);
+        }
+
+        // ── Build prompt ids (mirrors Python terminal_chat) ─────────────────
+        function buildPromptIds(history, userText) {
+            // [BOS][SYS] system_prompt [SEP] Human: t1 [SEP] AxiaLM: r1 [SEP] ... Human: <user> [SEP] AxiaLM:
+            const sysIds  = [TOK_BOS, TOK_SYS, ...tokenizer.encode(SYSTEM_PROMPT, false), TOK_SEP];
+            const axiaPrefix = tokenizer.encode('AxiaLM:', false);
+
+            let ids = [...sysIds];
+            const maxPrompt = MAX_CTX - GEN_MAX_NEW;
+
+            // Build turn history
+            const turns = [];
+            for (const { role, content } of history) {
+                const speaker = role === 'user' ? 'Human' : 'AxiaLM';
+                // Strip HTML tags for context (model was trained on plain text turns)
+                const plain = content.replace(/<[^>]+>/g, '').trim();
+                turns.push([speaker, plain]);
+            }
+
+            const buildIds = (hist, cur) => {
+                let out = [...sysIds];
+                for (const [sp, txt] of hist) {
+                    out.push(...tokenizer.encode(`${sp}: ${txt}`, false), TOK_SEP);
+                }
+                out.push(...tokenizer.encode(`Human: ${cur}`, false), TOK_SEP);
+                out.push(...axiaPrefix);
+                return out;
+            };
+
+            let promptIds = buildIds(turns, userText);
+
+            // Evict oldest turns if too long (never evict system prompt)
+            while (promptIds.length > maxPrompt && turns.length > 0) {
+                turns.shift();
+                promptIds = buildIds(turns, userText);
+            }
+
+            return promptIds;
+        }
+
+        // ── Main inference function ─────────────────────────────────────────
+        async function runInference(userText, history) {
+            if (!isModelReady) throw new Error("Model not loaded yet");
+
+            let inputIds = buildPromptIds(history, userText);
+            const newIds = [];
+
+            const STOP_TOKENS = new Set([TOK_SEP, TOK_EOS, TOK_BOS]);
+
+            for (let i = 0; i < GEN_MAX_NEW; i++) {
+                // Trim to context window
+                const ctx = inputIds.slice(-MAX_CTX);
+                const tensor = new ort.Tensor('int64',
+                    BigInt64Array.from(ctx.map(BigInt)), [1, ctx.length]);
+
+                const results = await ortSession.run({ input_ids: tensor });
+                const logitsArr = Array.from(results.logits.data);  // float32 array, length V
+
+                const nextId = sample(logitsArr, GEN_TEMP, GEN_TOP_K, GEN_TOP_P);
+
+                if (STOP_TOKENS.has(nextId)) break;
+                newIds.push(nextId);
+                inputIds.push(nextId);
+            }
+
+            if (newIds.length === 0) return '<p>...</p>';
+
+            // Decode and trim any stray stop-token text
+            let text = tokenizer.decode(newIds);
+            for (const stop of ['Human:', '[SEP]', '[SYS]', '[BOS]', '[EOS]']) {
+                const idx = text.indexOf(stop);
+                if (idx !== -1) text = text.slice(0, idx);
+            }
+            text = text.trim();
+
+            // If model output is plain text (pre-train checkpoint), wrap in <p>
+            if (!text.startsWith('<')) text = `<p>${text}</p>`;
+
+            return text || '<p>...</p>';
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
         // --- Theme Management ---
         const themeToggleBtn = document.getElementById('theme-toggle');
         const themeIconLight = document.getElementById('theme-icon-light');
@@ -643,6 +1036,7 @@
         function startNewChat() {
             currentSessionId = null;
             isFirstMessage = true;
+            conversationHistory = [];  // reset per-chat context
             
             messagesWrapper.innerHTML = '';
             messagesWrapper.classList.add('hidden');
@@ -779,48 +1173,36 @@
 
             // Send User Message
             setTimeout(() => appendMessage('user', text), isFirstMessage ? 500 : 0);
+            conversationHistory.push({ role: 'user', content: text });
 
             // Typing Indicator
             setTimeout(showTypingIndicator, isFirstMessage ? 800 : 300);
 
-            // Mock AI Response
-            setTimeout(() => {
-                removeTypingIndicator();
-                
-                const lowerText = text.toLowerCase();
-                let response = "";
-
-                if (lowerText.includes("hello") || lowerText.includes("hi")) {
-                    response = "<p>Hello! I'm AxiaLM 1 Mini. How can I assist you today?</p>";
-                } else if (lowerText.includes("photosynthesis")) {
-                    response = `
-                        <p>Photosynthesis is how plants make their own food! Here is a simple breakdown:</p>
-                        <ol class="list-decimal pl-5 mt-2 space-y-1">
-                            <li><strong>Sunlight:</strong> Plants absorb energy from the sun using a green pigment called chlorophyll.</li>
-                            <li><strong>Water & Air:</strong> They take in water from their roots and carbon dioxide from the air.</li>
-                            <li><strong>The Magic:</strong> They use the sun's energy to turn the water and carbon dioxide into sugar (glucose), which they eat to grow!</li>
-                            <li><strong>Oxygen:</strong> As a bonus, they release oxygen back into the air for us to breathe.</li>
-                        </ol>
-                    `;
-                } else if (lowerText.includes("time traveler")) {
-                    response = "<p>The chronometer on Elara's wrist clicked twice, the digital readout glowing a faint azure in the dim light of the alleyway. The year was 2142 just a moment ago. Now, looking at the cobblestone street and the horse-drawn carriage passing by, she knew the jump had been successful. She was in 1888, and she had exactly 4 hours to find the missing blueprint before the timeline fractured.</p>";
-                } else {
-                    response = "<p>That's an interesting thought! As an AI, I'm here to help you explore that topic further. Could you provide a bit more detail on what you're looking to learn or create?</p>";
+            // Real ONNX inference
+            (async () => {
+                try {
+                    const response = await runInference(text, conversationHistory);
+                    removeTypingIndicator();
+                    appendMessage('axia', response);
+                    conversationHistory.push({ role: 'axia', content: response });
+                } catch (err) {
+                    removeTypingIndicator();
+                    appendMessage('axia', `<p>Sorry, inference failed: ${err.message}</p>`);
+                    console.error(err);
+                } finally {
+                    chatInput.disabled = false;
+                    submitBtn.disabled = false;
+                    chatInput.focus();
+                    chatInput.dispatchEvent(new Event('input'));
                 }
-
-                appendMessage('axia', response);
-                
-                chatInput.disabled = false;
-                chatInput.focus();
-                chatInput.dispatchEvent(new Event('input')); 
-
-            }, (isFirstMessage ? 1000 : 500) + Math.random() * 1000);
+            })();
         });
 
         // --- Initialization ---
         window.onload = () => {
             renderSidebar();
             updateSystemStats(); // Initialize system stats
+            loadModel();         // Begin ONNX model + tokenizer download
             
             // Auto-load most recent chat if it exists
             if (sessions.length > 0) {
@@ -834,4 +1216,5 @@
         };
     </script>
 </body>
+</html>
 </html>
