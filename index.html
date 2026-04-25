@@ -90,12 +90,21 @@
                 transform: translateY(0);
             }
         }
+
+        /* System Health Pulse */
+        .status-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
     </style>
 </head>
 <body class="h-screen w-full flex overflow-hidden bg-[#fcfbf9] dark:bg-[#1a1a1a] text-gray-800 dark:text-gray-200">
 
     <!-- Sidebar -->
-    <aside id="sidebar" class="w-64 bg-[#f3f2ee] dark:bg-[#202020] border-r border-[#e6e4df] dark:border-[#333] flex-col hidden md:flex transition-all duration-300 z-20 shrink-0">
+    <aside id="sidebar" class="w-64 bg-[#f3f2ee] dark:bg-[#202020] border-r border-[#e6e4df] dark:border-[#333] flex flex-col hidden md:flex transition-all duration-300 z-20 shrink-0">
         <div class="p-4">
             <button onclick="startNewChat()" class="w-full flex items-center gap-2 bg-white dark:bg-[#2d2d2d] border border-[#e6e4df] dark:border-[#444] hover:bg-gray-50 dark:hover:bg-[#383838] text-sm font-medium px-4 py-2.5 rounded-lg shadow-sm transition-colors text-gray-800 dark:text-gray-200">
                 <i data-lucide="plus" class="w-4 h-4"></i>
@@ -103,11 +112,56 @@
             </button>
         </div>
         
-        <div class="flex-1 overflow-y-auto px-3 py-2 pb-24">
+        <div class="flex-1 overflow-y-auto px-3 py-2 pb-2">
             <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3 px-2">Recent</div>
             <!-- Dynamic Chat History List -->
             <div id="chat-history-list" class="space-y-1">
                 <!-- Session items will be injected here via JS -->
+            </div>
+        </div>
+
+        <!-- System Health Section -->
+        <div class="p-4 border-t border-[#e6e4df] dark:border-[#333]">
+            <div class="bg-white/50 dark:bg-black/20 rounded-xl p-3 border border-[#e6e4df] dark:border-[#333]">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-[10px] font-bold uppercase tracking-wider text-gray-500">System Health</span>
+                    <div class="flex items-center gap-1">
+                        <div id="health-indicator" class="w-2 h-2 rounded-full bg-emerald-500 status-pulse"></div>
+                        <span id="health-label" class="text-[10px] font-medium text-emerald-600">Stable</span>
+                    </div>
+                </div>
+                <div class="space-y-2">
+                    <!-- CPU Load -->
+                    <div class="flex justify-between items-center text-[11px]">
+                        <span class="text-gray-500">Est. Load</span>
+                        <span id="cpu-load" class="text-gray-700 dark:text-gray-300 font-mono">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden">
+                        <div id="cpu-bar" class="bg-indigo-500 h-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    
+                    <!-- RAM Usage -->
+                    <div class="flex justify-between items-center text-[11px] mt-2">
+                        <span class="text-gray-500">Est. RAM</span>
+                        <span id="ram-load" class="text-gray-700 dark:text-gray-300 font-mono">0 GB</span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden">
+                        <div id="ram-bar" class="bg-indigo-500 h-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+
+                    <div class="flex justify-between text-[10px] text-gray-400 mt-1">
+                        <span id="mem-info">Total: -- GB</span>
+                        <span id="core-info">Cores: --</span>
+                    </div>
+
+                    <!-- Token Speed Prediction -->
+                    <div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                        <div class="flex justify-between items-center text-[11px]">
+                            <span class="text-gray-500" title="Based on 84M Params (Transformers + SwiGLU)">Speed Est.</span>
+                            <span id="token-speed" class="font-mono font-medium">-- t/s</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </aside>
@@ -229,6 +283,117 @@
                 themeIconDark.classList.remove('hidden');
             }
         });
+
+        // --- System Health "Guessing" Logic ---
+        function updateSystemStats() {
+            const cpuLabel = document.getElementById('cpu-load');
+            const cpuBar = document.getElementById('cpu-bar');
+            const ramLabel = document.getElementById('ram-load');
+            const ramBar = document.getElementById('ram-bar');
+            const memInfo = document.getElementById('mem-info');
+            const coreInfo = document.getElementById('core-info');
+            const indicator = document.getElementById('health-indicator');
+            const healthLabel = document.getElementById('health-label');
+            const tokenSpeed = document.getElementById('token-speed');
+
+            const totalRam = navigator.deviceMemory || 4; // Fallback to 4GB if API is restricted
+            const cores = navigator.hardwareConcurrency || 2;
+
+            // 1. Static Vitals (Approximate)
+            if (navigator.deviceMemory) {
+                memInfo.textContent = `Total: ~${totalRam} GB`;
+            }
+            if (navigator.hardwareConcurrency) {
+                coreInfo.textContent = `Cores: ${cores}`;
+            }
+
+            // 2. Performance Guessing (Adjusted for Realistic Browser Limits)
+            let lastTime = performance.now();
+            
+            function measure() {
+                const now = performance.now();
+                const delta = now - lastTime;
+                
+                // CPU Latency & OS Simulation
+                // We can't read real OS CPU. A dual-core (Intel N4500) idles much higher than an 8-core.
+                let coreMultiplier = Math.max(1, 8 / cores); // 2 cores = 4, 8 cores = 1
+                let simulatedOsBase = 5 + (coreMultiplier * 6); // 2 cores = ~29% base, 8 cores = ~11% base
+                let idleJitter = Math.random() * 8; 
+                
+                let latency = Math.max(0, delta - 1000); 
+                let spike = Math.min(100, (latency / 50) * 100); 
+                
+                let finalLoad = Math.min(100, Math.round(simulatedOsBase + idleJitter + spike));
+
+                cpuLabel.textContent = `${finalLoad}%`;
+                cpuBar.style.width = `${finalLoad}%`;
+
+                // RAM Calculation (System RAM Simulation)
+                // performance.memory ONLY shows the current tab's JS heap (~50-100MB), NOT the whole computer.
+                // We must simulate background OS/Apps taking up ~35-45% of total RAM.
+                let osRamOverhead = totalRam * 0.38; 
+                let tabRam = 0.2; // default 200MB
+                if (performance.memory) {
+                    tabRam = (performance.memory.usedJSHeapSize / (1024 * 1024 * 1024));
+                }
+                
+                let modelRam = 0.15; // ~150MB for 84M model weights
+                let usedRam = osRamOverhead + tabRam + modelRam + (Math.random() * 0.05);
+                
+                usedRam = Math.min(usedRam, totalRam * 0.95);
+                const ramPercent = (usedRam / totalRam) * 100;
+                
+                ramLabel.textContent = `${usedRam.toFixed(2)} GB`;
+                ramBar.style.width = `${ramPercent}%`;
+
+                // Speed Prediction Math (Adjusted for Browser WebGPU/WASM)
+                // Browser inference is slower than native. Assume ~7.5 t/s per core on average.
+                const baseTps = cores * 7.5; 
+                const loadPenalty = (finalLoad / 100) * (baseTps * 0.6); // Slows down if CPU is heavily loaded
+                let estTps = Math.max(2, Math.round(baseTps - loadPenalty));
+                
+                let minTps = Math.max(1, estTps - 2);
+                let maxTps = estTps + 2;
+
+                // Determine Category (Adjusted thresholds for realistic browser speeds)
+                let tpsIcon, tpsClass, titleText;
+                if (estTps >= 25) {
+                    tpsIcon = '⭘';
+                    tpsClass = 'text-emerald-500 dark:text-emerald-400';
+                    titleText = 'Nominal Performance';
+                } else if (estTps >= 10) {
+                    tpsIcon = '⊝';
+                    tpsClass = 'text-yellow-500 dark:text-yellow-400';
+                    titleText = 'Sufficient Performance';
+                } else {
+                    tpsIcon = '⚠';
+                    tpsClass = 'text-red-500 dark:text-red-400';
+                    titleText = 'Poor Performance';
+                }
+
+                tokenSpeed.innerHTML = `<span class="${tpsClass}" title="${titleText}">${tpsIcon} ${minTps}-${maxTps} t/s</span>`;
+
+                // Change colors based on stress
+                if (finalLoad > 85) {
+                    indicator.className = "w-2 h-2 rounded-full bg-red-500 status-pulse";
+                    healthLabel.textContent = "High Stress";
+                    healthLabel.className = "text-[10px] font-medium text-red-600";
+                } else if (finalLoad > 50) {
+                    indicator.className = "w-2 h-2 rounded-full bg-amber-500 status-pulse";
+                    healthLabel.textContent = "Active";
+                    healthLabel.className = "text-[10px] font-medium text-amber-600";
+                } else {
+                    indicator.className = "w-2 h-2 rounded-full bg-emerald-500 status-pulse";
+                    healthLabel.textContent = "Stable";
+                    healthLabel.className = "text-[10px] font-medium text-emerald-600";
+                }
+
+                lastTime = performance.now();
+                setTimeout(measure, 1000); 
+            }
+            // Kick off the loop
+            setTimeout(measure, 1000);
+        }
 
         // --- Chat & UI Management ---
         lucide.createIcons();
@@ -623,6 +788,7 @@
         // --- Initialization ---
         window.onload = () => {
             renderSidebar();
+            updateSystemStats(); // Initialize system stats
             
             // Auto-load most recent chat if it exists
             if (sessions.length > 0) {
