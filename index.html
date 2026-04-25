@@ -131,18 +131,30 @@
                     </div>
                 </div>
                 <div class="space-y-2">
-                    <!-- CPU Load -->
+                    <!-- Clock Speed -->
                     <div class="flex justify-between items-center text-[11px]">
-                        <span class="text-gray-500">Est. Load</span>
+                        <span class="text-gray-500">Clock Speed</span>
+                        <span id="clock-speed" class="text-gray-700 dark:text-gray-300 font-mono">0.00 GHz</span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden mb-0.5">
+                        <div id="clock-bar" class="bg-indigo-500 h-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-start text-[9px] text-gray-400">
+                        <span id="max-clock-info">Max: -- GHz</span>
+                    </div>
+
+                    <!-- CPU Load -->
+                    <div class="flex justify-between items-center text-[11px] mt-1">
+                        <span class="text-gray-500">CPU Load</span>
                         <span id="cpu-load" class="text-gray-700 dark:text-gray-300 font-mono">0%</span>
                     </div>
-                    <div class="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden">
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden mb-1">
                         <div id="cpu-bar" class="bg-indigo-500 h-full transition-all duration-500" style="width: 0%"></div>
                     </div>
                     
                     <!-- RAM Usage -->
                     <div class="flex justify-between items-center text-[11px] mt-2">
-                        <span class="text-gray-500">Est. RAM</span>
+                        <span class="text-gray-500">RAM</span>
                         <span id="ram-load" class="text-gray-700 dark:text-gray-300 font-mono">0 GB</span>
                     </div>
                     <div class="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden">
@@ -286,18 +298,27 @@
 
         // --- System Health "Guessing" Logic ---
         function updateSystemStats() {
+            const clockSpeedLabel = document.getElementById('clock-speed');
+            const clockBar = document.getElementById('clock-bar');
             const cpuLabel = document.getElementById('cpu-load');
             const cpuBar = document.getElementById('cpu-bar');
             const ramLabel = document.getElementById('ram-load');
             const ramBar = document.getElementById('ram-bar');
             const memInfo = document.getElementById('mem-info');
             const coreInfo = document.getElementById('core-info');
+            const maxClockInfo = document.getElementById('max-clock-info');
             const indicator = document.getElementById('health-indicator');
             const healthLabel = document.getElementById('health-label');
             const tokenSpeed = document.getElementById('token-speed');
 
             const totalRam = navigator.deviceMemory || 4; // Fallback to 4GB if API is restricted
             const cores = navigator.hardwareConcurrency || 2;
+            
+            // Simulating a max clock speed based on core count
+            let estMaxClock = 2.8; // Base for 2 cores (like Intel N4500)
+            if (cores > 2) estMaxClock = 3.6;
+            if (cores >= 8) estMaxClock = 4.5;
+            if (cores >= 16) estMaxClock = 5.2;
 
             // 1. Static Vitals (Approximate)
             if (navigator.deviceMemory) {
@@ -306,6 +327,7 @@
             if (navigator.hardwareConcurrency) {
                 coreInfo.textContent = `Cores: ${cores}`;
             }
+            maxClockInfo.textContent = `Max: ~${estMaxClock.toFixed(2)} GHz`;
 
             // 2. Performance Guessing (Adjusted for Realistic Browser Limits)
             let lastTime = performance.now();
@@ -327,6 +349,16 @@
 
                 cpuLabel.textContent = `${finalLoad}%`;
                 cpuBar.style.width = `${finalLoad}%`;
+
+                // Clock Speed Simulation (scales with load)
+                let idleClock = estMaxClock * 0.35; // Base idle speed
+                let targetClock = idleClock + ((estMaxClock - idleClock) * (finalLoad / 100));
+                let clockJitter = (Math.random() - 0.5) * 0.15; // +/- 0.075 GHz variation
+                let currentClock = Math.max(0.8, Math.min(targetClock + clockJitter, estMaxClock));
+                clockSpeedLabel.textContent = `${currentClock.toFixed(2)} GHz`;
+                
+                let clockPercent = (currentClock / estMaxClock) * 100;
+                clockBar.style.width = `${clockPercent}%`;
 
                 // RAM Calculation (System RAM Simulation)
                 // performance.memory ONLY shows the current tab's JS heap (~50-100MB), NOT the whole computer.
