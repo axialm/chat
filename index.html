@@ -479,7 +479,7 @@
 
                 // Stream model with progress
                 const modelResp = await fetch(MODEL_URL);
-                if (!modelResp.ok) throw new Error(`Model fetch failed: ${modelResp.status} — is axialm1_int8.onnx in the model/ folder?`);
+                if (!modelResp.ok) throw new Error(`Model fetch failed: ${modelResp.status} — the directory is either corrupted or something halted the download process.`);
                 const total  = parseInt(modelResp.headers.get('content-length') || '0');
                 const reader = modelResp.body.getReader();
                 const chunks = [];
@@ -531,7 +531,7 @@
                 setProgress(0, '');
                 document.getElementById('model-status').innerHTML =
                     `<span class="text-red-500">Failed to load model: ${err.message}</span><br>` +
-                    `<span class="text-xs text-gray-400 mt-2 block">Make sure model/axialm1_int8.onnx, model/tokenizer.json and model/config.json exist in your repo.</span>`;
+                    `<span class="text-xs text-gray-400 mt-2 block">Verify the directory isn't corrupted and/or there is nothing halting the download process.</span>`;
             }
         }
 
