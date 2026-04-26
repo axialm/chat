@@ -918,12 +918,25 @@ function encodeSpecial(tok) {
 }
 
 function decode(ids) {
-    const tokens = ids.map(id => invVocab[id] || '').join('');
-    const bytes  = Array.from(tokens).map(ch => BYTE_INV[ch] ?? ch.charCodeAt(0));
+    const bytes = [];
+    for (const id of ids) {
+        const tok = invVocab[id];
+        if (!tok) continue;
+        // Each character in the token string is a byte-level symbol
+        for (const ch of tok) {
+            if (ch in BYTE_INV) {
+                bytes.push(BYTE_INV[ch]);
+            } else {
+                // Fallback: use char code directly (handles ASCII)
+                const code = ch.charCodeAt(0);
+                if (code < 256) bytes.push(code);
+            }
+        }
+    }
     try {
         return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
     } catch {
-        return tokens;
+        return bytes.map(b => String.fromCharCode(b)).join('');
     }
 }
 
@@ -1146,8 +1159,8 @@ self.onmessage = async (e) => {
 
                 } else if (type === 'token') {
                     // Streaming: append token text to live bubble
+                    removeTypingIndicator();
                     if (!streamDiv) {
-                        removeTypingIndicator();
                         const msgDiv = document.createElement('div');
                         msgDiv.className = 'message-appear flex gap-4 w-full';
                         msgDiv.innerHTML = `
