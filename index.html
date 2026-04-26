@@ -809,323 +809,262 @@
         let streamDiv = null;   // div being streamed into
 
         function initWorker() {
-            // Inline worker as Blob URL — avoids MIME/CORS issues with GitHub Pages
-            const workerCode = `/**
- * worker.js — AxiaLM-1 inference worker
- * Runs entirely off the main thread so the browser never freezes.
- * Uses @xenova/transformers for tokenization (correct HF BPE implementation)
- * and ONNX Runtime Web for inference.
- *
- * Host this file alongside index.html in your GitHub Pages repo.
- */
+            var workerCode = `importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js');
 
-importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js');
-
-// ── Config ────────────────────────────────────────────────────────────────────
 const BASE_URL   = 'https://axialm.github.io/chat';
 const MODEL_URL  = BASE_URL + '/model/axialm1_int8.onnx';
 const TOK_URL    = BASE_URL + '/model/tokenizer.json';
 const CONFIG_URL = BASE_URL + '/model/config.json';
 
-const SYSTEM_PROMPT =
-    "You are AxiaLM-1, a helpful and friendly AI assistant. " +
-    "You are a small language model with limitations — you may not always be " +
-    "accurate, and you should say so when unsure rather than guessing confidently. " +
-    "Be concise, honest, and conversational. " +
-    "Format your responses using simple HTML: use <p> for paragraphs, " +
-    "<ol> with <li> for numbered lists, <ul> with <li> for bullet lists, " +
-    "and <strong> for bold emphasis. Always wrap your response in at least " +
-    "one <p> tag. Do not use markdown.";
+const SYSTEM_PROMPT = "You are AxiaLM-1, a helpful and friendly AI assistant. You are a small language model with limitations. Be concise, honest, and conversational. Use HTML formatting: <p> for paragraphs, <ol>/<ul> with <li> for lists, <strong> for bold. Always wrap responses in <p> tags. No markdown.";
 
-const GEN_MAX_NEW = 200;
-const GEN_TEMP    = 0.75;
-const GEN_TOP_K   = 40;
-const GEN_TOP_P   = 0.90;
-const MAX_CTX     = 1024;
+const GEN_MAX_NEW = 200, GEN_TEMP = 0.75, GEN_TOP_K = 40, GEN_TOP_P = 0.90, MAX_CTX = 1024;
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let ortSession   = null;
-let tokData      = null;
-let modelConfig  = null;
-let vocab        = null;   // token -> id
-let invVocab     = null;   // id -> token
-let mergeRank    = null;   // "a b" -> priority
-let specialToks  = {};
+let ortSession = null, modelConfig = null;
+let vocab = {}, invVocab = {}, mergeRank = {}, specialToks = {};
 let TOK_BOS, TOK_EOS, TOK_SEP, TOK_SYS, TOK_PAD;
 
-// ── Tokenizer via @xenova/transformers ───────────────────────────────────────────
-// Uses the official HF tokenizer implementation — handles byte-level BPE correctly.
-let hfTokenizer = null;
-
-// Simple but correct byte-level BPE using the exact vocab from tokenizer.json
-let vocab = null, invVocab = null, mergeRank = null, specialToks = {};
-let TOK_BOS, TOK_EOS, TOK_SEP, TOK_SYS, TOK_PAD;
-
+// GPT-2 byte-to-unicode
 function buildByteMap() {
-    // Exact GPT-2 byte-to-unicode mapping
-    const map = {}, inv = {};
-    let n = 0;
-    for (let b = 0; b < 256; b++) {
-        let c;
-        if ((b >= 33 && b <= 126) || (b >= 161 && b <= 172) || (b >= 174 && b <= 255)) {
-            c = b;
-        } else {
-            c = 256 + n++;
-        }
-        map[b] = c;
-        inv[c] = b;
+    var fwd = {}, inv = {}, n = 0;
+    for (var b = 0; b < 256; b++) {
+        var inRange = (b >= 33 && b <= 126) || (b >= 161 && b <= 172) || (b >= 174 && b <= 255);
+        var c = inRange ? b : 256 + n++;
+        fwd[b] = c; inv[c] = b;
     }
-    return { map, inv };
+    return {fwd: fwd, inv: inv};
 }
-const { map: BMAP, inv: BINV } = buildByteMap();
+var BM = buildByteMap();
 
 function byteEncode(str) {
-    const bytes = new TextEncoder().encode(str);
-    return Array.from(bytes).map(b => String.fromCodePoint(BMAP[b])).join('');
+    var bytes = new TextEncoder().encode(str), out = '';
+    for (var i = 0; i < bytes.length; i++) out += String.fromCodePoint(BM.fwd[bytes[i]]);
+    return out;
 }
 
 function bpeMerge(word) {
-    let w = [...word];
-    while (w.length > 1) {
-        let best = Infinity, idx = -1;
-        for (let i = 0; i < w.length - 1; i++) {
-            const r = mergeRank[w[i] + ' ' + w[i+1]];
+    while (word.length > 1) {
+        var best = Infinity, idx = -1;
+        for (var i = 0; i < word.length - 1; i++) {
+            var r = mergeRank[word[i] + ' ' + word[i+1]];
             if (r !== undefined && r < best) { best = r; idx = i; }
         }
         if (idx === -1) break;
-        w = [...w.slice(0, idx), w[idx] + w[idx+1], ...w.slice(idx+2)];
+        var merged = word[idx] + word[idx+1];
+        word = word.slice(0, idx).concat([merged]).concat(word.slice(idx+2));
     }
-    return w;
+    return word;
 }
 
-function encode(text, addPrefixSpace = true) {
+function encode(text, addPrefixSpace) {
     if (!text) return [];
-    const s = addPrefixSpace ? ' ' + text : text;
-    const byteStr = byteEncode(s);
-    const tokens = bpeMerge([...byteStr]);
-    return tokens.map(t => vocab[t] ?? (vocab['[UNK]'] ?? 1));
+    var s = addPrefixSpace !== false ? ' ' + text : text;
+    var byteStr = byteEncode(s);
+    var chars = [];
+    for (var i = 0; i < byteStr.length; i++) chars.push(byteStr[i]);
+    var tokens = bpeMerge(chars);
+    var ids = [];
+    for (var t = 0; t < tokens.length; t++) {
+        var id = vocab[tokens[t]];
+        ids.push(id !== undefined ? id : (vocab['[UNK]'] || 1));
+    }
+    return ids;
 }
 
-function encodeSpecial(tok) { return specialToks[tok] ?? vocab[tok] ?? 0; }
+function encodeSpecial(tok) { return specialToks[tok] !== undefined ? specialToks[tok] : (vocab[tok] || 0); }
 
 function decode(ids) {
-    const bytes = [];
-    for (const id of ids) {
-        const tok = invVocab[id];
+    var bytes = [];
+    for (var i = 0; i < ids.length; i++) {
+        var tok = invVocab[ids[i]];
         if (!tok) continue;
-        for (const ch of tok) {
-            const cp = ch.codePointAt(0);
-            if (cp in BINV) bytes.push(BINV[cp]);
+        for (var j = 0; j < tok.length; j++) {
+            var cp = tok.codePointAt(j);
+            if (cp > 0xFFFF) j++; // surrogate pair
+            if (BM.inv[cp] !== undefined) bytes.push(BM.inv[cp]);
             else if (cp < 256) bytes.push(cp);
         }
     }
-    return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
+    return new TextDecoder('utf-8', {fatal: false}).decode(new Uint8Array(bytes));
 }
 
 function initTokenizer(data) {
     vocab = data.model.vocab;
     invVocab = {};
-    for (const [k, v] of Object.entries(vocab)) invVocab[v] = k;
+    var keys = Object.keys(vocab);
+    for (var i = 0; i < keys.length; i++) invVocab[vocab[keys[i]]] = keys[i];
     mergeRank = {};
-    (data.model.merges || []).forEach((m, i) => { mergeRank[m] = i; });
+    var merges = data.model.merges || [];
+    for (var i = 0; i < merges.length; i++) mergeRank[merges[i]] = i;
     specialToks = {};
-    for (const st of (data.added_tokens || [])) {
-        specialToks[st.content] = st.id;
-        invVocab[st.id] = st.content;
+    var added = data.added_tokens || [];
+    for (var i = 0; i < added.length; i++) {
+        specialToks[added[i].content] = added[i].id;
+        invVocab[added[i].id] = added[i].content;
     }
     TOK_BOS = encodeSpecial('[BOS]');
     TOK_EOS = encodeSpecial('[EOS]');
     TOK_SEP = encodeSpecial('[SEP]');
     TOK_SYS = encodeSpecial('[SYS]');
     TOK_PAD = encodeSpecial('[PAD]');
-    console.log('[Worker] Special tokens:', {TOK_BOS, TOK_EOS, TOK_SEP, TOK_SYS, TOK_PAD});
-    // Sanity check decode
-    const test = decode([TOK_BOS]);
-    console.log('[Worker] BOS decodes to:', JSON.stringify(test));
 }
 
-// ── Sampling ──────────────────────────────────────────────────────────────────
-function sample(logits, temp, topK, topP) {
-    // Temperature
-    const scaled = logits.map(v => v / temp);
+function softmax(logits) {
+    var max = -Infinity;
+    for (var i = 0; i < logits.length; i++) if (logits[i] > max) max = logits[i];
+    var exps = [], sum = 0;
+    for (var i = 0; i < logits.length; i++) { exps[i] = Math.exp(logits[i] - max); sum += exps[i]; }
+    for (var i = 0; i < exps.length; i++) exps[i] /= sum;
+    return exps;
+}
 
-    // Top-K filter
-    let filtered = [...scaled];
+function sample(logitsArr, temp, topK, topP) {
+    var scaled = new Array(logitsArr.length);
+    for (var i = 0; i < logitsArr.length; i++) scaled[i] = logitsArr[i] / temp;
     if (topK > 0) {
-        const sorted = [...scaled].sort((a, b) => b - a);
-        const thresh = sorted[Math.min(topK - 1, sorted.length - 1)];
-        filtered = scaled.map(v => v >= thresh ? v : -Infinity);
+        var sorted = scaled.slice().sort(function(a,b){return b-a;});
+        var thresh = sorted[Math.min(topK-1, sorted.length-1)];
+        for (var i = 0; i < scaled.length; i++) if (scaled[i] < thresh) scaled[i] = -Infinity;
     }
-
-    // Softmax
-    const max  = filtered.reduce((a, b) => Math.max(a, b), -Infinity);
-    const exps = filtered.map(v => Math.exp(v - max));
-    const sum  = exps.reduce((a, b) => a + b, 0);
-    const probs = exps.map(v => v / sum);
-
-    // Top-P nucleus sampling
-    const indexed = probs.map((p, i) => [p, i]).sort((a, b) => b[0] - a[0]);
-    let cum = 0;
-    const nucleus = [];
-    for (const [p, i] of indexed) {
-        nucleus.push([p, i]);
-        cum += p;
+    var probs = softmax(scaled);
+    var indexed = [];
+    for (var i = 0; i < probs.length; i++) indexed.push([probs[i], i]);
+    indexed.sort(function(a,b){return b[0]-a[0];});
+    var cum = 0, nucleus = [];
+    for (var i = 0; i < indexed.length; i++) {
+        nucleus.push(indexed[i]);
+        cum += indexed[i][0];
         if (cum >= topP) break;
     }
-    const nucSum = nucleus.reduce((s, [p]) => s + p, 0);
-    const normed = nucleus.map(([p, i]) => [p / nucSum, i]);
-    let r = Math.random(), acc = 0;
-    for (const [p, i] of normed) {
-        acc += p;
-        if (r <= acc) return i;
+    var total = 0;
+    for (var i = 0; i < nucleus.length; i++) total += nucleus[i][0];
+    var r = Math.random(), acc = 0;
+    for (var i = 0; i < nucleus.length; i++) {
+        acc += nucleus[i][0] / total;
+        if (r <= acc) return nucleus[i][1];
     }
-    return normed[normed.length - 1][1];
+    return nucleus[nucleus.length-1][1];
 }
 
-// ── Prompt builder ────────────────────────────────────────────────────────────
 function buildPrompt(history, userText) {
-    const sysIds      = [TOK_BOS, TOK_SYS, ...encode(SYSTEM_PROMPT, false), TOK_SEP];
-    const axiaPrefix  = encode('AxiaLM:', false);
-    const maxPrompt   = MAX_CTX - GEN_MAX_NEW;
+    var sysIds = [TOK_BOS, TOK_SYS].concat(encode(SYSTEM_PROMPT, false)).concat([TOK_SEP]);
+    var axiaPrefix = encode('AxiaLM:', false);
+    var maxPrompt = MAX_CTX - GEN_MAX_NEW;
 
-    const buildIds = (hist, cur) => {
-        let ids = [...sysIds];
-        for (const { role, content } of hist) {
-            const speaker = role === 'user' ? 'Human' : 'AxiaLM';
-            const plain   = content.replace(/<[^>]+>/g, '').trim();
-            ids.push(...encode(\`\${speaker}: \${plain}\`, false), TOK_SEP);
+    function buildIds(hist, cur) {
+        var ids = sysIds.slice();
+        for (var i = 0; i < hist.length; i++) {
+            var speaker = hist[i].role === 'user' ? 'Human' : 'AxiaLM';
+            var plain = hist[i].content.replace(/<[^>]+>/g, '').trim();
+            ids = ids.concat(encode(speaker + ': ' + plain, false)).concat([TOK_SEP]);
         }
-        ids.push(...encode(\`Human: \${cur}\`, false), TOK_SEP, ...axiaPrefix);
+        ids = ids.concat(encode('Human: ' + cur, false)).concat([TOK_SEP]).concat(axiaPrefix);
         return ids;
-    };
-
-    let hist = [...history];
-    let ids  = buildIds(hist, userText);
-    while (ids.length > maxPrompt && hist.length > 0) {
-        hist.shift();
-        ids = buildIds(hist, userText);
     }
+
+    var hist = history.slice();
+    var ids = buildIds(hist, userText);
+    while (ids.length > maxPrompt && hist.length > 0) { hist.shift(); ids = buildIds(hist, userText); }
     return ids;
 }
 
-// ── Inference ─────────────────────────────────────────────────────────────────
 async function runInference(userText, history) {
-    let inputIds = buildPrompt(history, userText);
-    const newIds = [];
-    const STOP   = new Set([TOK_SEP, TOK_EOS]);
+    var inputIds = buildPrompt(history, userText);
+    var newIds = [];
+    var STOP = {};
+    STOP[TOK_SEP] = true; STOP[TOK_EOS] = true;
 
-    for (let i = 0; i < GEN_MAX_NEW; i++) {
-        const ctx    = inputIds.slice(-MAX_CTX);
-        const tensor = new ort.Tensor('int64',
-            BigInt64Array.from(ctx.map(BigInt)), [1, ctx.length]);
-
-        const out     = await ortSession.run({ input_ids: tensor });
-        const logits  = Array.from(out.logits.data);
-        const nextId  = sample(logits, GEN_TEMP, GEN_TOP_K, GEN_TOP_P);
-
-        if (STOP.has(nextId)) break;
+    for (var i = 0; i < GEN_MAX_NEW; i++) {
+        var ctx = inputIds.slice(-MAX_CTX);
+        var bigints = new BigInt64Array(ctx.length);
+        for (var j = 0; j < ctx.length; j++) bigints[j] = BigInt(ctx[j]);
+        var tensor = new ort.Tensor('int64', bigints, [1, ctx.length]);
+        var out = await ortSession.run({input_ids: tensor});
+        var logits = Array.from(out.logits.data);
+        var nextId = sample(logits, GEN_TEMP, GEN_TOP_K, GEN_TOP_P);
+        if (STOP[nextId]) break;
         newIds.push(nextId);
         inputIds.push(nextId);
-
-        // Stream token back to main thread
-        const token = decode([nextId]);
-        self.postMessage({ type: 'token', token });
+        self.postMessage({type: 'token', token: decode([nextId])});
     }
 
-    let text = decode(newIds);
-    for (const stop of ['Human:', '[SEP]', '[SYS]', '[BOS]', '[EOS]']) {
-        const idx = text.indexOf(stop);
+    var text = decode(newIds);
+    var stops = ['Human:', '[SEP]', '[SYS]', '[BOS]', '[EOS]'];
+    for (var i = 0; i < stops.length; i++) {
+        var idx = text.indexOf(stops[i]);
         if (idx !== -1) text = text.slice(0, idx);
     }
     text = text.trim();
     if (!text) text = '<p>...</p>';
-    else if (!text.startsWith('<')) text = \`<p>\${text}</p>\`;
+    else if (text.charAt(0) !== '<') text = '<p>' + text + '</p>';
     return text;
 }
 
-// ── Load model ────────────────────────────────────────────────────────────────
 async function loadModel() {
-  try {
-    self.postMessage({ type: 'progress', pct: 5, msg: 'Fetching config...' });
-    const cfgResp = await fetch(CONFIG_URL);
-    if (!cfgResp.ok) throw new Error('Config fetch failed: ' + cfgResp.status);
-    modelConfig = await cfgResp.json();
-    self.postMessage({ type: 'progress', pct: 8, msg: 'Config OK, fetching tokenizer...' });
+    try {
+        self.postMessage({type: 'progress', pct: 5, msg: 'Fetching config...'});
+        var cfgResp = await fetch(CONFIG_URL);
+        if (!cfgResp.ok) throw new Error('Config fetch failed: ' + cfgResp.status);
+        modelConfig = await cfgResp.json();
 
-    const tokResp = await fetch(TOK_URL);
-    if (!tokResp.ok) throw new Error('Tokenizer fetch failed: ' + tokResp.status);
-    initTokenizer(await tokResp.json());
-    self.postMessage({ type: 'progress', pct: 15, msg: 'Tokenizer OK, downloading model...' });
+        self.postMessage({type: 'progress', pct: 10, msg: 'Fetching tokenizer...'});
+        var tokResp = await fetch(TOK_URL);
+        if (!tokResp.ok) throw new Error('Tokenizer fetch failed: ' + tokResp.status);
+        initTokenizer(await tokResp.json());
 
-    const modelResp = await fetch(MODEL_URL);
-    if (!modelResp.ok) throw new Error('Model fetch failed: ' + modelResp.status);
+        self.postMessage({type: 'progress', pct: 15, msg: 'Downloading model...'});
+        var modelResp = await fetch(MODEL_URL);
+        if (!modelResp.ok) throw new Error('Model fetch failed: ' + modelResp.status);
 
-    const total  = parseInt(modelResp.headers.get('content-length') || '0');
-    const reader = modelResp.body.getReader();
-    const chunks = [];
-    let received = 0;
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        if (total > 0) {
-            const pct = 15 + (received / total) * 68;
-            self.postMessage({ type: 'progress', pct,
-                msg: 'Downloading... ' + (received/1e6).toFixed(1) + ' / ' + (total/1e6).toFixed(1) + ' MB' });
+        var total = parseInt(modelResp.headers.get('content-length') || '0');
+        var reader = modelResp.body.getReader();
+        var chunks = [], received = 0;
+        while (true) {
+            var res = await reader.read();
+            if (res.done) break;
+            chunks.push(res.value);
+            received += res.value.length;
+            if (total > 0) self.postMessage({type: 'progress', pct: 15 + (received/total)*68,
+                msg: 'Downloading... ' + (received/1e6).toFixed(1) + ' / ' + (total/1e6).toFixed(1) + ' MB'});
         }
+        var buf = new Uint8Array(received); var pos = 0;
+        for (var i = 0; i < chunks.length; i++) { buf.set(chunks[i], pos); pos += chunks[i].length; }
+
+        self.postMessage({type: 'progress', pct: 87, msg: 'Starting ONNX Runtime...'});
+        ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
+        ort.env.wasm.numThreads = 1;
+        ort.env.wasm.simd = true;
+
+        self.postMessage({type: 'progress', pct: 92, msg: 'Creating ONNX session...'});
+        ortSession = await ort.InferenceSession.create(buf.buffer, {
+            executionProviders: ['wasm'],
+            graphOptimizationLevel: 'all'
+        });
+
+        self.postMessage({type: 'progress', pct: 100, msg: 'Ready!'});
+        self.postMessage({type: 'ready'});
+    } catch(err) {
+        self.postMessage({type: 'error', msg: 'Load failed: ' + err.message});
     }
-    self.postMessage({ type: 'progress', pct: 84, msg: 'Model downloaded, assembling buffer...' });
-    const buf = new Uint8Array(received);
-    let pos = 0;
-    for (const c of chunks) { buf.set(c, pos); pos += c.length; }
-
-    self.postMessage({ type: 'progress', pct: 87, msg: 'Starting ONNX Runtime...' });
-    const threads = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency)
-        ? Math.max(1, navigator.hardwareConcurrency - 1) : 1;
-    ort.env.wasm.numThreads = threads;
-    ort.env.wasm.simd = true;
-    self.postMessage({ type: 'progress', pct: 89, msg: 'WASM ready, checking WebGPU...' });
-
-    // Explicitly set WASM paths so the Blob worker can find them
-    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
-
-    self.postMessage({ type: 'progress', pct: 92, msg: 'Creating ONNX session (wasm)...' });
-    ortSession = await ort.InferenceSession.create(buf.buffer, {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all',
-    });
-    self.postMessage({ type: 'progress', pct: 100, msg: 'Ready!' });
-    self.postMessage({ type: 'ready' });
-  } catch(err) {
-    self.postMessage({ type: 'error', msg: 'Load failed: ' + err.message });
-  }
 }
 
-// ── Message handler ───────────────────────────────────────────────────────────
-self.onmessage = async (e) => {
-    const { type, userText, history } = e.data;
-    if (type === 'load') {
+self.onmessage = async function(e) {
+    if (e.data.type === 'load') {
+        await loadModel();
+    } else if (e.data.type === 'infer') {
         try {
-            await loadModel();
-        } catch (err) {
-            self.postMessage({ type: 'error', msg: err.message });
-        }
-    } else if (type === 'infer') {
-        try {
-            const response = await runInference(userText, history);
-            self.postMessage({ type: 'done', response });
-        } catch (err) {
-            self.postMessage({ type: 'error', msg: err.message });
+            var response = await runInference(e.data.userText, e.data.history);
+            self.postMessage({type: 'done', response: response});
+        } catch(err) {
+            self.postMessage({type: 'error', msg: err.message});
         }
     }
-};
-`;
-            const blob = new Blob([workerCode], { type: 'application/javascript' });
-            const workerUrl = URL.createObjectURL(blob);
-            inferWorker = new Worker(workerUrl);
-            inferWorker.onmessage = (e) => {
-                const { type, pct, msg, token, response, error } = e.data;
+};`;
+            var blob = new Blob([workerCode], {type: 'application/javascript'});
+            inferWorker = new Worker(URL.createObjectURL(blob));
+            inferWorker.onmessage = function(e) {
+                var type = e.data.type, pct = e.data.pct, msg = e.data.msg,
+                    token = e.data.token, response = e.data.response;
 
                 if (type === 'progress') {
                     document.getElementById('model-progress-bar').style.width = pct + '%';
@@ -1134,25 +1073,19 @@ self.onmessage = async (e) => {
 
                 } else if (type === 'ready') {
                     isModelReady = true;
-                    const overlay = document.getElementById('model-overlay');
+                    var overlay = document.getElementById('model-overlay');
                     overlay.style.opacity = '0';
-                    setTimeout(() => overlay.style.display = 'none', 500);
+                    setTimeout(function(){ overlay.style.display = 'none'; }, 500);
                     chatInput.disabled = false;
                     submitBtn.disabled = false;
                     chatInput.focus();
 
                 } else if (type === 'token') {
-                    // Streaming: append token text to live bubble
                     removeTypingIndicator();
                     if (!streamDiv) {
-                        const msgDiv = document.createElement('div');
+                        var msgDiv = document.createElement('div');
                         msgDiv.className = 'message-appear flex gap-4 w-full';
-                        msgDiv.innerHTML = `
-                            <div class="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center shrink-0 mt-0.5 shadow-sm border border-gray-200 dark:border-[#444] bg-white dark:bg-[#252525]">
-                                <img src="logo.png" alt="AxiaLM Logo" class="w-full h-full object-cover">
-                            </div>
-                            <div class="stream-content flex-1 text-[15px] leading-relaxed text-gray-800 dark:text-gray-200 prose prose-sm max-w-none pt-1"></div>
-                        `;
+                        msgDiv.innerHTML = '<div class="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center shrink-0 mt-0.5 shadow-sm border border-gray-200 dark:border-[#444] bg-white dark:bg-[#252525]"><img src="logo.png" alt="AxiaLM Logo" class="w-full h-full object-cover"></div><div class="stream-content flex-1 text-[15px] leading-relaxed text-gray-800 dark:text-gray-200 prose prose-sm max-w-none pt-1"></div>';
                         messagesWrapper.appendChild(msgDiv);
                         streamDiv = msgDiv.querySelector('.stream-content');
                     }
@@ -1160,15 +1093,9 @@ self.onmessage = async (e) => {
                     scrollToBottom();
 
                 } else if (type === 'done') {
-                    // Replace streamed plain text with final HTML response
-                    if (streamDiv) {
-                        streamDiv.innerHTML = response;
-                        streamDiv = null;
-                    } else {
-                        removeTypingIndicator();
-                        appendMessage('axia', response);
-                    }
-                    conversationHistory.push({ role: 'axia', content: response });
+                    if (streamDiv) { streamDiv.innerHTML = response; streamDiv = null; }
+                    else { removeTypingIndicator(); appendMessage('axia', response); }
+                    conversationHistory.push({role: 'axia', content: response});
                     chatInput.disabled = false;
                     submitBtn.disabled = false;
                     chatInput.focus();
@@ -1177,16 +1104,17 @@ self.onmessage = async (e) => {
 
                 } else if (type === 'error') {
                     removeTypingIndicator();
-                    if (streamDiv) { streamDiv.innerHTML = `<p class="text-red-500">Error: ${e.data.msg}</p>`; streamDiv = null; }
-                    else appendMessage('axia', `<p class="text-red-500">Error: ${e.data.msg}</p>`);
+                    var errMsg = '<p style="color:red">Error: ' + e.data.msg + '</p>';
+                    if (streamDiv) { streamDiv.innerHTML = errMsg; streamDiv = null; }
+                    else appendMessage('axia', errMsg);
                     chatInput.disabled = false;
                     submitBtn.disabled = false;
                 }
             };
-            inferWorker.postMessage({ type: 'load' });
+            inferWorker.postMessage({type: 'load'});
         }
 
-        // --- Initialization ---
+                // --- Initialization ---
         window.onload = () => {
             renderSidebar();
             updateSystemStats();
