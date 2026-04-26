@@ -1090,15 +1090,10 @@ async function loadModel() {
     ort.env.wasm.simd = true;
     self.postMessage({ type: 'progress', pct: 89, msg: 'WASM ready, checking WebGPU...' });
 
-    let providers = ['wasm'];
-    try {
-        if (typeof navigator !== 'undefined' && navigator.gpu) {
-            const adapter = await navigator.gpu.requestAdapter();
-            if (adapter) providers = ['webgpu', 'wasm'];
-        }
-    } catch(gpuErr) {}
+    // Force WASM only — WebGPU hangs on many setups
+    const providers = ['wasm'];
 
-    self.postMessage({ type: 'progress', pct: 92, msg: 'Creating ONNX session (' + providers[0] + ')...' });
+    self.postMessage({ type: 'progress', pct: 92, msg: 'Creating ONNX session (wasm)...' });
     ortSession = await ort.InferenceSession.create(buf.buffer, {
         executionProviders: providers,
         graphOptimizationLevel: 'all',
