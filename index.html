@@ -907,10 +907,10 @@ function initTokenizer(data) {
     TOK_SEP = encodeSpecial('[SEP]');
     TOK_SYS = encodeSpecial('[SYS]');
     TOK_PAD = encodeSpecial('[PAD]');
-    // Decode test — encode 'hello' then decode it back
-    var testIds = encode('hello', true);
-    var testDec = decode(testIds);
-    self.postMessage({type: 'progress', pct: 14, msg: 'Tok test: encode hello->ids=' + testIds.slice(0,3).join(',') + ' decode=' + testDec});
+    // Store decode test result to post as first token during inference
+    var _testIds = encode('hello', true);
+    var _testDec = decode(_testIds);
+    self._tokTest = 'TOK_TEST ids=' + _testIds.slice(0,4).join(',') + ' dec=' + JSON.stringify(_testDec) + ' bos=' + TOK_BOS + ' sep=' + TOK_SEP;
 }
 
 function softmax(logits) {
@@ -980,6 +980,7 @@ async function runInference(userText, history) {
 
     // Debug: report prompt length and first tokens
     self.postMessage({type: 'token', token: '[DBG prompt_len=' + inputIds.length + ' first5=' + inputIds.slice(0,5).join(',') + ' bos=' + TOK_BOS + ' sep=' + TOK_SEP + ']'});
+    if (self._tokTest) { self.postMessage({type: 'token', token: self._tokTest + ' | '}); self._tokTest = null; }
     for (var i = 0; i < GEN_MAX_NEW; i++) {
         var ctx = inputIds.slice(-MAX_CTX);
         var bigints = new BigInt64Array(ctx.length);
