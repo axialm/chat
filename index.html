@@ -907,6 +907,10 @@ function initTokenizer(data) {
     TOK_SEP = encodeSpecial('[SEP]');
     TOK_SYS = encodeSpecial('[SYS]');
     TOK_PAD = encodeSpecial('[PAD]');
+    // Decode test — encode 'hello' then decode it back
+    var testIds = encode('hello', true);
+    var testDec = decode(testIds);
+    self.postMessage({type: 'progress', pct: 14, msg: 'Tok test: encode hello->ids=' + testIds.slice(0,3).join(',') + ' decode=' + testDec});
 }
 
 function softmax(logits) {
