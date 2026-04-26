@@ -1047,19 +1047,20 @@ async function runInference(userText, history) {
 
 // ── Load model ────────────────────────────────────────────────────────────────
 async function loadModel() {
+  try {
     self.postMessage({ type: 'progress', pct: 5, msg: 'Fetching config...' });
     const cfgResp = await fetch(CONFIG_URL);
-    if (!cfgResp.ok) throw new Error(\`Config fetch failed: \${cfgResp.status}\`);
+    if (!cfgResp.ok) throw new Error('Config fetch failed: ' + cfgResp.status);
     modelConfig = await cfgResp.json();
+    self.postMessage({ type: 'progress', pct: 8, msg: 'Config OK, fetching tokenizer...' });
 
-    self.postMessage({ type: 'progress', pct: 10, msg: 'Fetching tokenizer...' });
     const tokResp = await fetch(TOK_URL);
-    if (!tokResp.ok) throw new Error(\`Tokenizer fetch failed: \${tokResp.status}\`);
+    if (!tokResp.ok) throw new Error('Tokenizer fetch failed: ' + tokResp.status);
     initTokenizer(await tokResp.json());
+    self.postMessage({ type: 'progress', pct: 15, msg: 'Tokenizer OK, downloading model...' });
 
-    self.postMessage({ type: 'progress', pct: 15, msg: 'Downloading model...' });
     const modelResp = await fetch(MODEL_URL);
-    if (!modelResp.ok) throw new Error(\`Model fetch failed: \${modelResp.status}\`);
+    if (!modelResp.ok) throw new Error('Model fetch failed: ' + modelResp.status);
 
     const total  = parseInt(modelResp.headers.get('content-length') || '0');
     const reader = modelResp.body.getReader();
@@ -1071,37 +1072,41 @@ async function loadModel() {
         chunks.push(value);
         received += value.length;
         if (total > 0) {
-            const pct = 15 + (received / total) * 70;
+            const pct = 15 + (received / total) * 68;
             self.postMessage({ type: 'progress', pct,
-                msg: \`Downloading... \${(received/1e6).toFixed(1)} / \${(total/1e6).toFixed(1)} MB\` });
+                msg: 'Downloading... ' + (received/1e6).toFixed(1) + ' / ' + (total/1e6).toFixed(1) + ' MB' });
         }
     }
+    self.postMessage({ type: 'progress', pct: 84, msg: 'Model downloaded, assembling buffer...' });
     const buf = new Uint8Array(received);
     let pos = 0;
     for (const c of chunks) { buf.set(c, pos); pos += c.length; }
 
     self.postMessage({ type: 'progress', pct: 87, msg: 'Starting ONNX Runtime...' });
-
-    ort.env.wasm.numThreads = Math.max(1, (navigator.hardwareConcurrency || 2) - 1);
+    const threads = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency)
+        ? Math.max(1, navigator.hardwareConcurrency - 1) : 1;
+    ort.env.wasm.numThreads = threads;
     ort.env.wasm.simd = true;
+    self.postMessage({ type: 'progress', pct: 89, msg: 'WASM ready, checking WebGPU...' });
 
-    // Try WebGPU, fall back to WASM
     let providers = ['wasm'];
     try {
         if (typeof navigator !== 'undefined' && navigator.gpu) {
             const adapter = await navigator.gpu.requestAdapter();
             if (adapter) providers = ['webgpu', 'wasm'];
         }
-    } catch {}
+    } catch(gpuErr) {}
 
-    self.postMessage({ type: 'progress', pct: 92, msg: \`Creating session (\${providers[0]})...\` });
+    self.postMessage({ type: 'progress', pct: 92, msg: 'Creating ONNX session (' + providers[0] + ')...' });
     ortSession = await ort.InferenceSession.create(buf.buffer, {
         executionProviders: providers,
         graphOptimizationLevel: 'all',
     });
-
     self.postMessage({ type: 'progress', pct: 100, msg: 'Ready!' });
     self.postMessage({ type: 'ready' });
+  } catch(err) {
+    self.postMessage({ type: 'error', msg: 'Load failed: ' + err.message });
+  }
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────
