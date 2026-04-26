@@ -974,6 +974,8 @@ async function runInference(userText, history) {
     var STOP = {};
     STOP[TOK_SEP] = true; STOP[TOK_EOS] = true;
 
+    // Debug: report prompt length and first tokens
+    self.postMessage({type: 'token', token: '[DBG prompt_len=' + inputIds.length + ' first5=' + inputIds.slice(0,5).join(',') + ' bos=' + TOK_BOS + ' sep=' + TOK_SEP + ']'});
     for (var i = 0; i < GEN_MAX_NEW; i++) {
         var ctx = inputIds.slice(-MAX_CTX);
         var bigints = new BigInt64Array(ctx.length);
