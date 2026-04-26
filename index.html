@@ -819,7 +819,7 @@
  * Host this file alongside index.html in your GitHub Pages repo.
  */
 
-importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.all.min.js');
+importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const BASE_URL   = 'https://axialm.github.io/chat';
@@ -1093,18 +1093,9 @@ async function loadModel() {
     // Explicitly set WASM paths so the Blob worker can find them
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
 
-    // Try WebGPU first (faster), fall back to WASM
-    let providers = ['wasm'];
-    try {
-        if (typeof navigator !== 'undefined' && navigator.gpu) {
-            const adapter = await navigator.gpu.requestAdapter();
-            if (adapter) providers = ['webgpu', 'wasm'];
-        }
-    } catch(gpuErr) {}
-
-    self.postMessage({ type: 'progress', pct: 92, msg: 'Creating ONNX session (' + providers[0] + ')...' });
+    self.postMessage({ type: 'progress', pct: 92, msg: 'Creating ONNX session (wasm)...' });
     ortSession = await ort.InferenceSession.create(buf.buffer, {
-        executionProviders: providers,
+        executionProviders: ['wasm'],
         graphOptimizationLevel: 'all',
     });
     self.postMessage({ type: 'progress', pct: 100, msg: 'Ready!' });
