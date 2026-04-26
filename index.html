@@ -892,15 +892,15 @@ function initTokenizer(data) {
     vocab = data.model.vocab;
     invVocab = {};
     var keys = Object.keys(vocab);
-    for (var i = 0; i < keys.length; i++) invVocab[vocab[keys[i]]] = keys[i];
+    for (var i = 0; i < keys.length; i++) invVocab[parseInt(vocab[keys[i]])] = keys[i];
     mergeRank = {};
     var merges = data.model.merges || [];
     for (var i = 0; i < merges.length; i++) mergeRank[merges[i]] = i;
     specialToks = {};
     var added = data.added_tokens || [];
     for (var i = 0; i < added.length; i++) {
-        specialToks[added[i].content] = added[i].id;
-        invVocab[added[i].id] = added[i].content;
+        specialToks[added[i].content] = parseInt(added[i].id);
+        invVocab[parseInt(added[i].id)] = added[i].content;
     }
     TOK_BOS = encodeSpecial('[BOS]');
     TOK_EOS = encodeSpecial('[EOS]');
@@ -1095,8 +1095,15 @@ self.onmessage = async function(e) {
                     scrollToBottom();
 
                 } else if (type === 'done') {
-                    if (streamDiv) { streamDiv.innerHTML = response; streamDiv = null; }
-                    else { removeTypingIndicator(); appendMessage('axia', response); }
+                    if (streamDiv) {
+                        streamDiv.innerHTML = response;
+                        streamDiv = null;
+                        // Save to session manually since we bypassed appendMessage
+                        if (currentSessionId) {
+                            var si = sessions.findIndex(function(s){return s.id===currentSessionId;});
+                            if (si !== -1) { sessions[si].messages.push({role:'axia', content:response}); saveSessions(); }
+                        }
+                    } else { removeTypingIndicator(); appendMessage('axia', response); }
                     conversationHistory.push({role: 'axia', content: response});
                     chatInput.disabled = false;
                     submitBtn.disabled = false;
