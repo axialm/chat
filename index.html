@@ -816,7 +816,7 @@ const MODEL_URL  = BASE_URL + '/model/axialm1_int8.onnx';
 const TOK_URL    = BASE_URL + '/model/tokenizer.json';
 const CONFIG_URL = BASE_URL + '/model/config.json';
 
-const SYSTEM_PROMPT = "You are AxiaLM-1, a helpful and friendly AI assistant. You are a small language model with limitations. Be concise, honest, and conversational. Use HTML formatting: <p> for paragraphs, <ol>/<ul> with <li> for lists, <strong> for bold. Always wrap responses in <p> tags. No markdown.";
+const SYSTEM_PROMPT = "You are AxiaLM-1, a helpful AI. Use <p> tags for responses.";
 
 const GEN_MAX_NEW = 200, GEN_TEMP = 0.75, GEN_TOP_K = 40, GEN_TOP_P = 0.90, MAX_CTX = 1024;
 
@@ -949,7 +949,7 @@ function sample(logitsArr, temp, topK, topP) {
 function buildPrompt(history, userText) {
     var sysIds = [TOK_BOS, TOK_SYS].concat(encode(SYSTEM_PROMPT, false)).concat([TOK_SEP]);
     var axiaPrefix = encode('AxiaLM:', false);
-    var maxPrompt = MAX_CTX - GEN_MAX_NEW;
+    var maxPrompt = MAX_CTX - GEN_MAX_NEW - 50;
 
     function buildIds(hist, cur) {
         var ids = sysIds.slice();
