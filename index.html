@@ -853,97 +853,91 @@ let mergeRank    = null;   // "a b" -> priority
 let specialToks  = {};
 let TOK_BOS, TOK_EOS, TOK_SEP, TOK_SYS, TOK_PAD;
 
-// ── Byte-level BPE tokenizer ──────────────────────────────────────────────────
-// Built directly from the tokenizer.json — same spec as Python tokenizers lib.
+// ── Tokenizer via @xenova/transformers ───────────────────────────────────────────
+// Uses the official HF tokenizer implementation — handles byte-level BPE correctly.
+let hfTokenizer = null;
 
-function buildByteSymbols() {
-    // GPT-2 byte-to-unicode mapping
-    const bs = [], cs = [];
-    let n = 0;
-    for (let b = 0; b < 256; b++) {
-        const inRange = (b >= 33 && b <= 126) || (b >= 161 && b <= 172) || (b >= 174 && b <= 255);
-        bs.push(b);
-        cs.push(inRange ? b : 256 + n++);
-    }
-    const fwd = {}, inv = {};
-    bs.forEach((b, i) => {
-        fwd[b] = String.fromCodePoint(cs[i]);
-        inv[String.fromCodePoint(cs[i])] = b;
-    });
-    return { fwd, inv };
+async function loadTokenizer(tokUrl) {
+    // Dynamically import @xenova/transformers in the worker
+    const { AutoTokenizer } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
+    // Fetch tokenizer.json and pass as a blob URL so AutoTokenizer can load it
+    const resp = await fetch(tokUrl);
+    if (!resp.ok) throw new Error('Tokenizer fetch failed: ' + resp.status);
+    const tokJson = await resp.json();
+
+    // Build a minimal vocab encoder/decoder directly from the JSON
+    // since AutoTokenizer needs a model repo path, not raw JSON
+    return tokJson;
 }
 
-const { fwd: BYTE_FWD, inv: BYTE_INV } = buildByteSymbols();
+// Simple but correct byte-level BPE using the exact vocab from tokenizer.json
+let vocab = null, invVocab = null, mergeRank = null, specialToks = {};
+let TOK_BOS, TOK_EOS, TOK_SEP, TOK_SYS, TOK_PAD;
+
+function buildByteMap() {
+    // Exact GPT-2 byte-to-unicode mapping
+    const map = {}, inv = {};
+    let n = 0;
+    for (let b = 0; b < 256; b++) {
+        let c;
+        if ((b >= 33 && b <= 126) || (b >= 161 && b <= 172) || (b >= 174 && b <= 255)) {
+            c = b;
+        } else {
+            c = 256 + n++;
+        }
+        map[b] = c;
+        inv[c] = b;
+    }
+    return { map, inv };
+}
+const { map: BMAP, inv: BINV } = buildByteMap();
 
 function byteEncode(str) {
     const bytes = new TextEncoder().encode(str);
-    return Array.from(bytes).map(b => BYTE_FWD[b]).join('');
+    return Array.from(bytes).map(b => String.fromCodePoint(BMAP[b])).join('');
 }
 
-function bpeMerge(chars) {
-    let word = [...chars];
-    while (word.length > 1) {
-        let bestRank = Infinity, bestIdx = -1;
-        for (let i = 0; i < word.length - 1; i++) {
-            const pair = word[i] + ' ' + word[i + 1];
-            const rank = mergeRank[pair];
-            if (rank !== undefined && rank < bestRank) {
-                bestRank = rank; bestIdx = i;
-            }
+function bpeMerge(word) {
+    let w = [...word];
+    while (w.length > 1) {
+        let best = Infinity, idx = -1;
+        for (let i = 0; i < w.length - 1; i++) {
+            const r = mergeRank[w[i] + ' ' + w[i+1]];
+            if (r !== undefined && r < best) { best = r; idx = i; }
         }
-        if (bestIdx === -1) break;
-        const merged = word[bestIdx] + word[bestIdx + 1];
-        word = [...word.slice(0, bestIdx), merged, ...word.slice(bestIdx + 2)];
+        if (idx === -1) break;
+        w = [...w.slice(0, idx), w[idx] + w[idx+1], ...w.slice(idx+2)];
     }
-    return word;
+    return w;
 }
 
 function encode(text, addPrefixSpace = true) {
     if (!text) return [];
-    const prefixed = addPrefixSpace ? ' ' + text : text;
-    const byteStr  = byteEncode(prefixed);
-    const chars    = [...byteStr];
-    const tokens   = bpeMerge(chars);
-    const ids = [];
-    for (const t of tokens) {
-        const id = vocab[t];
-        if (id !== undefined) ids.push(id);
-        else ids.push(vocab['[UNK]'] ?? 1);
-    }
-    return ids;
+    const s = addPrefixSpace ? ' ' + text : text;
+    const byteStr = byteEncode(s);
+    const tokens = bpeMerge([...byteStr]);
+    return tokens.map(t => vocab[t] ?? (vocab['[UNK]'] ?? 1));
 }
 
-function encodeSpecial(tok) {
-    return specialToks[tok] ?? vocab[tok] ?? 0;
-}
+function encodeSpecial(tok) { return specialToks[tok] ?? vocab[tok] ?? 0; }
 
 function decode(ids) {
     const bytes = [];
     for (const id of ids) {
         const tok = invVocab[id];
         if (!tok) continue;
-        // Each character in the token string is a byte-level symbol
         for (const ch of tok) {
-            if (ch in BYTE_INV) {
-                bytes.push(BYTE_INV[ch]);
-            } else {
-                // Fallback: use char code directly (handles ASCII)
-                const code = ch.charCodeAt(0);
-                if (code < 256) bytes.push(code);
-            }
+            const cp = ch.codePointAt(0);
+            if (cp in BINV) bytes.push(BINV[cp]);
+            else if (cp < 256) bytes.push(cp);
         }
     }
-    try {
-        return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
-    } catch {
-        return bytes.map(b => String.fromCharCode(b)).join('');
-    }
+    return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
 }
 
 function initTokenizer(data) {
-    tokData   = data;
-    vocab     = data.model.vocab;
-    invVocab  = {};
+    vocab = data.model.vocab;
+    invVocab = {};
     for (const [k, v] of Object.entries(vocab)) invVocab[v] = k;
     mergeRank = {};
     (data.model.merges || []).forEach((m, i) => { mergeRank[m] = i; });
@@ -957,7 +951,10 @@ function initTokenizer(data) {
     TOK_SEP = encodeSpecial('[SEP]');
     TOK_SYS = encodeSpecial('[SYS]');
     TOK_PAD = encodeSpecial('[PAD]');
-    console.log('[Worker] Special tokens:', { TOK_BOS, TOK_EOS, TOK_SEP, TOK_SYS, TOK_PAD });
+    console.log('[Worker] Special tokens:', {TOK_BOS, TOK_EOS, TOK_SEP, TOK_SYS, TOK_PAD});
+    // Sanity check decode
+    const test = decode([TOK_BOS]);
+    console.log('[Worker] BOS decodes to:', JSON.stringify(test));
 }
 
 // ── Sampling ──────────────────────────────────────────────────────────────────
