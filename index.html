@@ -1053,16 +1053,34 @@ async function loadModel() {
         // 4. Stitch Parts
         var buf = new Uint8Array(received);
         var pos = 0;
-        for (var i = 0; i < chunks.length; i++) {
-            buf.set(chunks[i], pos);
-            pos += chunks[i].length;
+        while (chunks.length > 0) {
+            var chunk = chunks.shift(); // Move chunk to buf and delete from memory
+            buf.set(chunk, pos);
+            pos += chunk.length;
         }
+        chunks = null; // Completely free the memory from the chunks list
 
         // 5. Start ONNX
         self.postMessage({type: 'progress', pct: 87, msg: 'Starting ONNX Runtime...'});
         ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
-        ort.env.wasm.numThreads = 1;
+        
+        // Let ONNX decide threads, but keep SIMD for speed
+        ort.env.wasm.numThreads = navigator.hardwareConcurrency || 1;
         ort.env.wasm.simd = true;
+
+        self.postMessage({type: 'progress', pct: 92, msg: 'Creating ONNX session...'});
+        
+        // Use the buffer directly
+        ortSession = await ort.InferenceSession.create(buf.buffer, { 
+            executionProviders: ['wasm'], 
+            graphOptimizationLevel: 'all' 
+        });
+
+        // IMPORTANT: Free the large buffer once the session is created
+        buf = null; 
+
+        self.postMessage({type: 'progress', pct: 100, msg: 'Ready!'});
+        self.postMessage({type: 'ready'});
 
         self.postMessage({type: 'progress', pct: 92, msg: 'Creating ONNX session...'});
         ortSession = await ort.InferenceSession.create(buf.buffer, { 
