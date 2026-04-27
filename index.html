@@ -1023,8 +1023,8 @@ async function loadModel() {
         self.postMessage({type: 'progress', pct: 15, msg: 'Downloading model parts...'});
         
         var parts = [
-            BASE_URL + '/model/axialm1.onnx.part1',
-            BASE_URL + '/model/axialm1.onnx.part2'
+            BASE_URL + '/model/axialm1_p1.onnx',
+            BASE_URL + '/model/axialm1_p2.onnx'
         ];
         
         var chunks = [], received = 0;
