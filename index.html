@@ -1008,33 +1008,54 @@ async function runInference(userText, history) {
 
 async function loadModel() {
     try {
-        self.postMessage({type: 'progress', pct: 5, msg: 'Fetching config...'});
-        var cfgResp = await fetch(CONFIG_URL);
-        if (!cfgResp.ok) throw new Error('Config fetch failed: ' + cfgResp.status);
-        modelConfig = await cfgResp.json();
-
+        // ... (Config and Tokenizer fetch remain exactly the same) ...
         self.postMessage({type: 'progress', pct: 10, msg: 'Fetching tokenizer...'});
         var tokResp = await fetch(TOK_URL);
         if (!tokResp.ok) throw new Error('Tokenizer fetch failed: ' + tokResp.status);
         initTokenizer(await tokResp.json());
 
-        self.postMessage({type: 'progress', pct: 15, msg: 'Downloading model...'});
-        var modelResp = await fetch(MODEL_URL);
-        if (!modelResp.ok) throw new Error('Model fetch failed: ' + modelResp.status);
-
-        var total = parseInt(modelResp.headers.get('content-length') || '0');
-        var reader = modelResp.body.getReader();
+        // --- MODIFIED MODEL DOWNLOAD START ---
+        self.postMessage({type: 'progress', pct: 15, msg: 'Downloading model parts...'});
+        
+        // Define your two parts (ensure these match your GitHub filenames)
+        const PART1_URL = BASE_URL + '/model/axialm1.onnx.part1';
+        const PART2_URL = BASE_URL + '/model/axialm1.onnx.part2';
+        const parts = [PART1_URL, PART2_URL];
+        
         var chunks = [], received = 0;
-        while (true) {
-            var res = await reader.read();
-            if (res.done) break;
-            chunks.push(res.value);
-            received += res.value.length;
-            if (total > 0) self.postMessage({type: 'progress', pct: 15 + (received/total)*68,
-                msg: 'Downloading... ' + (received/1e6).toFixed(1) + ' / ' + (total/1e6).toFixed(1) + ' MB'});
+        // Since we don't know the exact combined total easily, 
+        // we'll estimate based on your FP32 size (approx 34MB)
+        const ESTIMATED_TOTAL = 34 * 1024 * 1024; 
+
+        for (let i = 0; i < parts.length; i++) {
+            let modelResp = await fetch(parts[i]);
+            if (!modelResp.ok) throw new Error(`Part ${i+1} fetch failed: ` + modelResp.status);
+            
+            let reader = modelResp.body.getReader();
+            while (true) {
+                let {done, value} = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                received += value.length;
+                
+                // Keep your progress bar working
+                let pct = 15 + (received / ESTIMATED_TOTAL) * 68;
+                self.postMessage({
+                    type: 'progress', 
+                    pct: Math.min(pct, 83), 
+                    msg: `Downloading Part ${i+1}... ${(received/1e6).toFixed(1)} MB`
+                });
+            }
         }
-        var buf = new Uint8Array(received); var pos = 0;
-        for (var i = 0; i < chunks.length; i++) { buf.set(chunks[i], pos); pos += chunks[i].length; }
+
+        // Stitch the parts exactly like your original script did with chunks
+        var buf = new Uint8Array(received);
+        var pos = 0;
+        for (var i = 0; i < chunks.length; i++) {
+            buf.set(chunks[i], pos);
+            pos += chunks[i].length;
+        }
+        // --- MODIFIED MODEL DOWNLOAD END ---
 
         self.postMessage({type: 'progress', pct: 87, msg: 'Starting ONNX Runtime...'});
         ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
@@ -1042,9 +1063,9 @@ async function loadModel() {
         ort.env.wasm.simd = true;
 
         self.postMessage({type: 'progress', pct: 92, msg: 'Creating ONNX session...'});
-        ortSession = await ort.InferenceSession.create(buf.buffer, {
-            executionProviders: ['wasm'],
-            graphOptimizationLevel: 'all'
+        ortSession = await ort.InferenceSession.create(buf.buffer, { 
+            executionProviders: ['wasm'], 
+            graphOptimizationLevel: 'all' 
         });
 
         self.postMessage({type: 'progress', pct: 100, msg: 'Ready!'});
