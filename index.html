@@ -1019,36 +1019,36 @@ async function loadModel() {
         if (!tokResp.ok) throw new Error('Tokenizer fetch failed: ' + tokResp.status);
         initTokenizer(await tokResp.json());
 
-        // 2. Download Model Parts with corrected names
         self.postMessage({type: 'progress', pct: 15, msg: 'Downloading model parts...'});
-        
-        var parts = [
-            BASE_URL + '/model/axialm1_p1.onnx', // Updated Name
-            BASE_URL + '/model/axialm1_p2.onnx'  // Updated Name
-        ];
-        
-        var chunks = [], received = 0;
-        var total = 34 * 1024 * 1024; 
 
-        for (var i = 0; i < parts.length; i++) {
-            // Add a cache-buster just in case GitHub is holding the old ".part" versions
-            var modelResp = await fetch(parts[i] + '?v=1'); 
-            if (!modelResp.ok) throw new Error('Part ' + (i+1) + ' failed');
-            
-            var reader = modelResp.body.getReader();
-            while (true) {
-                var res = await reader.read();
-                if (res.done) break;
-                chunks.push(res.value);
-                received += res.value.length;
-                
-                self.postMessage({
-                    type: 'progress', 
-                    pct: 15 + (received / total) * 68, 
-                    msg: 'Downloading... ' + (received/1e6).toFixed(1) + ' / ' + (total/1e6).toFixed(1) + ' MB'
-                });
-            }
-        }
+        // 1. Fetch both parts as Blobs (the browser's raw data format)
+        const [res1, res2] = await Promise.all([
+            fetch(BASE_URL + '/model/axialm1_p1.onnx?v=3'),
+            fetch(BASE_URL + '/model/axialm1_p2.onnx?v=3')
+        ]);
+
+        if (!res1.ok || !res2.ok) throw new Error('Download failed');
+
+        // 2. Convert to Blobs
+        const blob1 = await res1.blob();
+        const blob2 = await res2.blob();
+
+        self.postMessage({type: 'progress', pct: 80, msg: 'Stitching bytes...'});
+
+        // 3. Native Stitching: Let the browser combine them perfectly
+        const combinedBlob = new Blob([blob1, blob2]);
+        const arrayBuffer = await combinedBlob.arrayBuffer();
+
+        // 4. Verification: Check the size (Should be ~34MB)
+        console.log("Combined size:", arrayBuffer.byteLength);
+
+        self.postMessage({type: 'progress', pct: 92, msg: 'Creating ONNX session...'});
+
+        // 5. Create Session
+        ortSession = await ort.InferenceSession.create(arrayBuffer, { 
+            executionProviders: ['wasm'], 
+            graphOptimizationLevel: 'all' 
+        });
 
         // 3. Stitch precisely (Identical to your old script's logic)
         var buf = new Uint8Array(received);
