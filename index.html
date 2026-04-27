@@ -1074,9 +1074,9 @@ async function loadModel() {
             // Disable memory-heavy optimizations and parallel execution for a safer load
             ortSession = await ort.InferenceSession.create(buf.buffer, { 
                 executionProviders: ['wasm'], 
-                graphOptimizationLevel: 'disabled', // Prevent memory spikes during optimization
-                enableCpuMemArena: false,           // Further reduce peak memory usage
-                enableMemoryPattern: false
+                graphOptimizationLevel: 'all',
+                // This helps the WASM heap stay organized with larger files
+                freeDimensionOverrides: { batch: 1, seq: 16 } 
             });
         } catch (innerErr) {
             throw new Error('InferenceSession.create failed: ' + innerErr.message);
