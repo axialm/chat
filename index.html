@@ -1027,19 +1027,19 @@ async function loadModel() {
         // we'll estimate based on your FP32 size (approx 34MB)
         const ESTIMATED_TOTAL = 34 * 1024 * 1024; 
 
-        for (let i = 0; i < parts.length; i++) {
+        for (var i = 0; i < parts.length; i++) {
             let modelResp = await fetch(parts[i]);
             if (!modelResp.ok) throw new Error(`Part ${i+1} fetch failed: ` + modelResp.status);
             
-            let reader = modelResp.body.getReader();
+            var reader = modelResp.body.getReader();
             while (true) {
-                let {done, value} = await reader.read();
+                var {done, value} = await reader.read();
                 if (done) break;
                 chunks.push(value);
                 received += value.length;
                 
                 // Keep your progress bar working
-                let pct = 15 + (received / ESTIMATED_TOTAL) * 68;
+                var pct = 15 + (received / ESTIMATED_TOTAL) * 68;
                 self.postMessage({
                     type: 'progress', 
                     pct: Math.min(pct, 83), 
