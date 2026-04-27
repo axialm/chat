@@ -1008,55 +1008,57 @@ async function runInference(userText, history) {
 
 async function loadModel() {
     try {
-        // ... (Config and Tokenizer fetch remain exactly the same) ...
+        // 1. Fetch Config
+        self.postMessage({type: 'progress', pct: 5, msg: 'Fetching config...'});
+        var cfgResp = await fetch(CONFIG_URL);
+        if (!cfgResp.ok) throw new Error('Config fetch failed: ' + cfgResp.status);
+        modelConfig = await cfgResp.json();
+
+        // 2. Fetch Tokenizer
         self.postMessage({type: 'progress', pct: 10, msg: 'Fetching tokenizer...'});
         var tokResp = await fetch(TOK_URL);
         if (!tokResp.ok) throw new Error('Tokenizer fetch failed: ' + tokResp.status);
         initTokenizer(await tokResp.json());
 
-        // --- MODIFIED MODEL DOWNLOAD START ---
+        // 3. Download Model Parts
         self.postMessage({type: 'progress', pct: 15, msg: 'Downloading model parts...'});
         
-        // Define your two parts (ensure these match your GitHub filenames)
-        const PART1_URL = BASE_URL + '/model/axialm1.onnx.part1';
-        const PART2_URL = BASE_URL + '/model/axialm1.onnx.part2';
-        const parts = [PART1_URL, PART2_URL];
+        var PART1_URL = BASE_URL + '/model/axialm1.onnx.part1';
+        var PART2_URL = BASE_URL + '/model/axialm1.onnx.part2';
+        var parts = [PART1_URL, PART2_URL];
         
         var chunks = [], received = 0;
-        // Since we don't know the exact combined total easily, 
-        // we'll estimate based on your FP32 size (approx 34MB)
-        const ESTIMATED_TOTAL = 34 * 1024 * 1024; 
+        var ESTIMATED_TOTAL = 34 * 1024 * 1024; 
 
         for (var i = 0; i < parts.length; i++) {
-            let modelResp = await fetch(parts[i]);
-            if (!modelResp.ok) throw new Error(`Part ${i+1} fetch failed: ` + modelResp.status);
+            var modelResp = await fetch(parts[i]);
+            if (!modelResp.ok) throw new Error('Part ' + (i + 1) + ' fetch failed: ' + modelResp.status);
             
             var reader = modelResp.body.getReader();
             while (true) {
-                var {done, value} = await reader.read();
-                if (done) break;
-                chunks.push(value);
-                received += value.length;
+                var res = await reader.read();
+                if (res.done) break;
+                chunks.push(res.value);
+                received += res.value.length;
                 
-                // Keep your progress bar working
                 var pct = 15 + (received / ESTIMATED_TOTAL) * 68;
                 self.postMessage({
                     type: 'progress', 
                     pct: Math.min(pct, 83), 
-                    msg: `Downloading Part ${i+1}... ${(received/1e6).toFixed(1)} MB`
+                    msg: 'Downloading Part ' + (i + 1) + '... ' + (received/1e6).toFixed(1) + ' MB'
                 });
             }
         }
 
-        // Stitch the parts exactly like your original script did with chunks
+        // 4. Stitch Parts
         var buf = new Uint8Array(received);
         var pos = 0;
         for (var i = 0; i < chunks.length; i++) {
             buf.set(chunks[i], pos);
             pos += chunks[i].length;
         }
-        // --- MODIFIED MODEL DOWNLOAD END ---
 
+        // 5. Start ONNX
         self.postMessage({type: 'progress', pct: 87, msg: 'Starting ONNX Runtime...'});
         ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
         ort.env.wasm.numThreads = 1;
