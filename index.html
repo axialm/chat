@@ -1008,31 +1008,32 @@ async function runInference(userText, history) {
 
 async function loadModel() {
     try {
-        // 1. Fetch Config
+        // 1. Config & Tokenizer (Identical to your old script)
         self.postMessage({type: 'progress', pct: 5, msg: 'Fetching config...'});
         var cfgResp = await fetch(CONFIG_URL);
         if (!cfgResp.ok) throw new Error('Config fetch failed: ' + cfgResp.status);
         modelConfig = await cfgResp.json();
 
-        // 2. Fetch Tokenizer
         self.postMessage({type: 'progress', pct: 10, msg: 'Fetching tokenizer...'});
         var tokResp = await fetch(TOK_URL);
         if (!tokResp.ok) throw new Error('Tokenizer fetch failed: ' + tokResp.status);
         initTokenizer(await tokResp.json());
 
-        // 3. Download Model Parts
+        // 2. Download Model Parts
         self.postMessage({type: 'progress', pct: 15, msg: 'Downloading model parts...'});
         
-        var PART1_URL = BASE_URL + '/model/axialm1.onnx.part1';
-        var PART2_URL = BASE_URL + '/model/axialm1.onnx.part2';
-        var parts = [PART1_URL, PART2_URL];
+        var parts = [
+            BASE_URL + '/model/axialm1.onnx.part1',
+            BASE_URL + '/model/axialm1.onnx.part2'
+        ];
         
         var chunks = [], received = 0;
-        var ESTIMATED_TOTAL = 34 * 1024 * 1024; 
+        // Total size for FP32 is approx 34MB
+        var total = 34 * 1024 * 1024; 
 
         for (var i = 0; i < parts.length; i++) {
             var modelResp = await fetch(parts[i]);
-            if (!modelResp.ok) throw new Error('Part ' + (i + 1) + ' fetch failed: ' + modelResp.status);
+            if (!modelResp.ok) throw new Error('Part ' + (i+1) + ' failed');
             
             var reader = modelResp.body.getReader();
             while (true) {
@@ -1041,54 +1042,33 @@ async function loadModel() {
                 chunks.push(res.value);
                 received += res.value.length;
                 
-                var pct = 15 + (received / ESTIMATED_TOTAL) * 68;
+                // Keep progress bar moving smoothly
                 self.postMessage({
                     type: 'progress', 
-                    pct: Math.min(pct, 83), 
-                    msg: 'Downloading Part ' + (i + 1) + '... ' + (received/1e6).toFixed(1) + ' MB'
+                    pct: 15 + (received / total) * 68, 
+                    msg: 'Downloading... ' + (received/1e6).toFixed(1) + ' / ' + (total/1e6).toFixed(1) + ' MB'
                 });
             }
         }
 
-        // 4. Stitch Parts
+        // 3. Stitch precisely (Identical to your old script's logic)
         var buf = new Uint8Array(received);
         var pos = 0;
-        while (chunks.length > 0) {
-            var chunk = chunks.shift(); // Move chunk to buf and delete from memory
-            buf.set(chunk, pos);
-            pos += chunk.length;
+        for (var i = 0; i < chunks.length; i++) {
+            buf.set(chunks[i], pos);
+            pos += chunks[i].length;
         }
-        chunks = null; // Completely free the memory from the chunks list
+        // Clear memory immediately
+        chunks = []; 
 
-        // 5. Start ONNX
+        // 4. Start ONNX (Identical to your old script)
         self.postMessage({type: 'progress', pct: 87, msg: 'Starting ONNX Runtime...'});
         ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
-        
-        // Let ONNX decide threads, but keep SIMD for speed
-        ort.env.wasm.numThreads = navigator.hardwareConcurrency || 1;
+        ort.env.wasm.numThreads = 1;
         ort.env.wasm.simd = true;
 
         self.postMessage({type: 'progress', pct: 92, msg: 'Creating ONNX session...'});
-
-        try {
-            // Disable memory-heavy optimizations and parallel execution for a safer load
-            ortSession = await ort.InferenceSession.create(buf.buffer, { 
-                executionProviders: ['wasm'], 
-                graphOptimizationLevel: 'all',
-                // This helps the WASM heap stay organized with larger files
-                freeDimensionOverrides: { batch: 1, seq: 16 } 
-            });
-        } catch (innerErr) {
-            throw new Error('InferenceSession.create failed: ' + innerErr.message);
-        }
-
-        // Immediately release the large buffer to prevent browser lag
-        buf = null; 
-
-        self.postMessage({type: 'progress', pct: 100, msg: 'Ready!'});
-        self.postMessage({type: 'ready'});
-
-        self.postMessage({type: 'progress', pct: 92, msg: 'Creating ONNX session...'});
+        // Passing the buffer directly, just like your old working script
         ortSession = await ort.InferenceSession.create(buf.buffer, { 
             executionProviders: ['wasm'], 
             graphOptimizationLevel: 'all' 
