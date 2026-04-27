@@ -1019,20 +1019,20 @@ async function loadModel() {
         if (!tokResp.ok) throw new Error('Tokenizer fetch failed: ' + tokResp.status);
         initTokenizer(await tokResp.json());
 
-        // 2. Download Model Parts
+        // 2. Download Model Parts with corrected names
         self.postMessage({type: 'progress', pct: 15, msg: 'Downloading model parts...'});
         
         var parts = [
-            BASE_URL + '/model/axialm1_p1.onnx',
-            BASE_URL + '/model/axialm1_p2.onnx'
+            BASE_URL + '/model/axialm1_p1.onnx', // Updated Name
+            BASE_URL + '/model/axialm1_p2.onnx'  // Updated Name
         ];
         
         var chunks = [], received = 0;
-        // Total size for FP32 is approx 34MB
         var total = 34 * 1024 * 1024; 
 
         for (var i = 0; i < parts.length; i++) {
-            var modelResp = await fetch(parts[i]);
+            // Add a cache-buster just in case GitHub is holding the old ".part" versions
+            var modelResp = await fetch(parts[i] + '?v=1'); 
             if (!modelResp.ok) throw new Error('Part ' + (i+1) + ' failed');
             
             var reader = modelResp.body.getReader();
@@ -1042,7 +1042,6 @@ async function loadModel() {
                 chunks.push(res.value);
                 received += res.value.length;
                 
-                // Keep progress bar moving smoothly
                 self.postMessage({
                     type: 'progress', 
                     pct: 15 + (received / total) * 68, 
