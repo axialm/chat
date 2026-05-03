@@ -951,17 +951,15 @@ function sample(logitsArr, temp, topK, topP) {
 }
 
 function buildPrompt(history, userText) {
-    var axiaPrefix = encode('AxiaLM:', false);
+    var axiaPrefix = encode('AxiaLM:', true);
     var maxPrompt = MAX_CTX - GEN_MAX_NEW - 50;
 
     function buildIds(hist, cur) {
+        // Minimal prompt to test model output quality
         var ids = [TOK_BOS];
-        for (var i = 0; i < hist.length; i++) {
-            var speaker = hist[i].role === 'user' ? 'Human' : 'AxiaLM';
-            var plain = hist[i].content.replace(/<[^>]+>/g, '').trim();
-            ids = ids.concat(encode(speaker + ': ' + plain, false)).concat([TOK_SEP]);
-        }
-        ids = ids.concat(encode('Human: ' + cur, false)).concat([TOK_SEP]).concat(axiaPrefix);
+        ids = ids.concat(encode(cur, true));
+        ids = ids.concat([TOK_SEP]);
+        ids = ids.concat(axiaPrefix);
         return ids;
     }
 
