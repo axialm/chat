@@ -183,14 +183,50 @@
 
         // Format Markdown
         function formatMarkdown(text) {
-            const codeBlockRegex = new RegExp('```([\\s\\S]*?)```', 'g');
-            const inlineCodeRegex = new RegExp('`([^`]+)`', 'g');
-            return text
-                .replace(codeBlockRegex, '<pre class="bg-gray-800 text-gray-100 dark:bg-black p-3 rounded-xl my-2 overflow-x-auto text-sm border border-gray-700"><code>$1</code></pre>')
-                .replace(inlineCodeRegex, '<code class="bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded text-sm text-pink-600 dark:text-pink-400">$1</code>')
-                .replace(/\*\*([^\*]+)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*([^\*]+)\*/g, '<em>$1</em>')
-                .replace(/\n/g, '<br>');
+            // 1. Extract code blocks first so we don't format contents inside them
+            const codeBlocks = [];
+            let processed = text.replace(/```([\s\S]*?)```/g, (match, code) => {
+                codeBlocks.push(code);
+                return `___CODE_${codeBlocks.length - 1}___`;
+            });
+
+            // 2. Headings (###, ##, #)
+            processed = processed.replace(/^### (.*$)/gim, '<h3 class="text-lg font-bold mt-5 mb-2 text-gray-800 dark:text-gray-200">$1</h3>');
+            processed = processed.replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold mt-6 mb-2 text-gray-800 dark:text-gray-200">$1</h2>');
+            processed = processed.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold mt-7 mb-3 text-gray-800 dark:text-gray-200">$1</h1>');
+
+            // 3. Bold and Italic
+            processed = processed.replace(/\*\*([^\*]+)\*\*/g, '<strong class="font-semibold text-gray-900 dark:text-gray-100">$1</strong>');
+            processed = processed.replace(/\*([^\*]+)\*/g, '<em>$1</em>');
+
+            // 4. Inline Code
+            processed = processed.replace(/`([^`]+)`/g, '<code class="bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[13.5px] text-pink-600 dark:text-pink-400 font-mono">$1</code>');
+
+            // 5. Lists (Bullets and Numbers)
+            processed = processed.replace(/^[\-\*]\s+(.*$)/gim, '<li class="ml-5 list-disc mb-1.5">$1</li>');
+            processed = processed.replace(/^\d+\.\s+(.*$)/gim, '<li class="ml-5 list-decimal mb-1.5">$1</li>');
+
+            // 6. Line Breaks
+            processed = processed.replace(/\n/g, '<br>');
+            
+            // 7. Clean up extra breaks after block elements
+            processed = processed.replace(/<\/h1><br>/g, '</h1>');
+            processed = processed.replace(/<\/h2><br>/g, '</h2>');
+            processed = processed.replace(/<\/h3><br>/g, '</h3>');
+            processed = processed.replace(/<\/li><br>/g, '</li>');
+
+            // 8. Restore Code Blocks
+            processed = processed.replace(/___CODE_(\d+)___/g, (match, index) => {
+                let code = codeBlocks[index];
+                // Remove optional markdown language tag (e.g., 'javascript' or 'html') at the start
+                code = code.replace(/^[\w\-]+\n/, '');
+                // Escape HTML brackets so code doesn't render as actual webpage elements
+                code = code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                
+                return `<pre class="bg-[#1e1e2e] text-gray-100 dark:bg-black p-4 rounded-xl my-4 overflow-x-auto text-[13.5px] border border-gray-700/50 leading-relaxed font-mono shadow-sm"><code>${code}</code></pre>`;
+            });
+
+            return processed;
         }
 
         function toggleTheme() { document.documentElement.classList.toggle('dark'); }
