@@ -9,6 +9,14 @@
     <script>
         tailwind.config = { darkMode: 'class' }
     </script>
+    <script>
+        // Check local storage for theme preference BEFORE page loads to prevent flashing
+        if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    </script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
@@ -229,7 +237,10 @@
             return processed;
         }
 
-        function toggleTheme() { document.documentElement.classList.toggle('dark'); }
+        function toggleTheme() { 
+            document.documentElement.classList.toggle('dark'); 
+            localStorage.theme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+        }
 
         function fillPrompt(text) {
             chatInput.value = text;
