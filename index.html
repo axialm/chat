@@ -142,6 +142,9 @@
     </div>
 
 <script>
+        const TAVILY_API_KEY = "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";
+        const GROQ_API_KEY = "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";
+    
         lucide.createIcons();
         const chatForm = document.getElementById('chat-form');
         const chatInput = document.getElementById('chat-input');
@@ -378,9 +381,6 @@ Your goal is to address the user's true intent with clarity. Stay in character a
         }
 
         // --- Submit Logic ---
-        const TAVILY_API_KEY = "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";
-        const GROQ_API_KEY = "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";
-
         chatForm.onsubmit = async (e) => {
             e.preventDefault();
             const text = chatInput.value.trim();
