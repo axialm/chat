@@ -66,6 +66,38 @@
             <div id="greeting" class="max-w-2xl mx-auto py-10 md:py-20 transition-opacity duration-300">
                 <h1 class="text-4xl font-semibold mb-2 text-gradient">Hello, there.</h1>
                 <p class="text-gray-500 dark:text-gray-400 text-lg mb-8">How can I assist you today?</p>
+                
+                <!-- Example Prompts -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8 w-full">
+                    <button onclick="fillPrompt('Explain a complex concept like quantum physics in simple terms')" class="text-left p-4 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#252525] hover:border-indigo-300 dark:hover:border-indigo-600 shadow-sm hover:shadow transition-all group flex flex-col gap-3">
+                        <div class="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0 transition-colors group-hover:bg-amber-200 dark:group-hover:bg-amber-900/50">
+                            <i data-lucide="lightbulb" class="w-4 h-4 text-amber-600 dark:text-amber-400"></i>
+                        </div>
+                        <div>
+                            <div class="font-medium text-[15px] mb-1 text-gray-800 dark:text-gray-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">Explain a concept</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">Quantum physics in simple terms</div>
+                        </div>
+                    </button>
+                    <button onclick="fillPrompt('Create a 3-day study plan for my upcoming biology exam')" class="text-left p-4 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#252525] hover:border-indigo-300 dark:hover:border-indigo-600 shadow-sm hover:shadow transition-all group flex flex-col gap-3">
+                        <div class="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0 transition-colors group-hover:bg-emerald-200 dark:group-hover:bg-emerald-900/50">
+                            <i data-lucide="calendar" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
+                        </div>
+                        <div>
+                            <div class="font-medium text-[15px] mb-1 text-gray-800 dark:text-gray-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">Create a plan</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">3-day study schedule</div>
+                        </div>
+                    </button>
+                    <button onclick="fillPrompt('Draft a short sci-fi story about a rogue AI helping humanity')" class="text-left p-4 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#252525] hover:border-indigo-300 dark:hover:border-indigo-600 shadow-sm hover:shadow transition-all group flex flex-col gap-3">
+                        <div class="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center shrink-0 transition-colors group-hover:bg-purple-200 dark:group-hover:bg-purple-900/50">
+                            <i data-lucide="pen-tool" class="w-4 h-4 text-purple-600 dark:text-purple-400"></i>
+                        </div>
+                        <div>
+                            <div class="font-medium text-[15px] mb-1 text-gray-800 dark:text-gray-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">Draft a story</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">A rogue AI helping humanity</div>
+                        </div>
+                    </button>
+                </div>
+
                 <div id="setup-warning" class="hidden p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl mb-6 flex items-start gap-3 transition-all">
                     <i data-lucide="alert-circle" class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"></i>
                     <div class="text-sm text-amber-800 dark:text-amber-200">
@@ -162,6 +194,13 @@
         }
 
         function toggleTheme() { document.documentElement.classList.toggle('dark'); }
+
+        function fillPrompt(text) {
+            chatInput.value = text;
+            chatInput.style.height = 'auto';
+            chatInput.style.height = (chatInput.scrollHeight) + 'px';
+            chatInput.focus();
+        }
 
         // --- Init Network Check ---
         async function checkNetworkOnLoad() {
