@@ -385,8 +385,7 @@ Your goal is to address the user's true intent with clarity. Stay in character a
             return msg;
         }
 
-        // --- Submit Logic ---
-        chatForm.onsubmit = async (e) => {
+chatForm.onsubmit = async (e) => {
             e.preventDefault();
             const text = chatInput.value.trim();
             if (!text || isGenerating) return;
@@ -396,10 +395,9 @@ Your goal is to address the user's true intent with clarity. Stay in character a
             isGenerating = true;
             submitBtn.disabled = true;
 
-            let isFirstMessage = false;
+            // 1. Session Setup
             if (!currentSessionId) {
                 currentSessionId = Date.now();
-                isFirstMessage = true;
                 sessions.push({ id: currentSessionId, title: "New Chat", history: [systemPrompt] });
             }
             const currentSession = sessions.find(s => s.id === currentSessionId);
@@ -409,80 +407,37 @@ Your goal is to address the user's true intent with clarity. Stay in character a
             currentSession.history = [...history];
             saveSessionsToLocal();
 
-            if (isFirstMessage) generateChatTitle(currentSessionId, text);
-
+            // 2. Initial Buffer
             const typing = document.createElement('div');
             typing.id = 'typing-buffer';
             typing.innerHTML = '<div class="ml-12 shiny-text text-sm italic py-4 animate-pulse">Thinking...</div>';
             messagesDiv.appendChild(typing);
-            document.getElementById('chat-container').scrollTo({ top: messagesDiv.scrollHeight, behavior: 'smooth' });
 
-            // 1. ROUTER CHECK
-            let needsSearch = false;
-            let dynamicTemp = 0.5;
+            let aiText = "";
 
             try {
-                const checkRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                // Slicing history to keep context small (helps avoid TPM limits)
+                let optimizedHistory = [systemPrompt, ...history.slice(-8)];
+
+                const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` },
-                    body: JSON.stringify({
-                        model: "llama-3.3-70b-versatile",
-                        messages: [
-                            { role: "system", content: "You are a router. Evaluate the user's query. 1. Does it need live internet access to answer correctly? (true/false). 2. What temperature is best? (0.0 for math/code/logic, 0.5 for general facts/chat, 0.9 for creative writing/stories). Reply ONLY with valid JSON format exactly like this: {\"search\": false, \"temp\": 0.5}, you do not have to put 'false' and '0.5', but that's the format you should follow." },
-                            { role: "user", content: text }
-                        ],
-                        temperature: 0,
-                        max_tokens: 20
+                    headers: { 
+                        "Content-Type": "application/json", 
+                        "Authorization": `Bearer ${GROQ_API_KEY}` 
+                    },
+                    body: JSON.stringify({ 
+                        model: "llama-3.3-70b-versatile", 
+                        messages: optimizedHistory, 
+                        stream: true, 
+                        temperature: 0.6 // Stable default
                     })
                 });
 
-                const checkData = await checkRes.json();
-                let decision = checkData.choices[0]?.message.content || "";
-                decision = decision.replace(/```json/g, '').replace(/```/g, '').trim();
-                const routeData = JSON.parse(decision);
-
-                if (routeData.search === true) needsSearch = true;
-                if (typeof routeData.temp === 'number') dynamicTemp = routeData.temp;
-            } catch (err) {
-                console.error("Router decision failed, using defaults", err);
-            }
-
-            // 2. TAVILY SEARCH
-            let payloadHistory = [...history];
-            if (needsSearch) {
-                typing.innerHTML = '<div class="ml-12 shiny-text text-sm italic py-4 animate-pulse">Searching the web...</div>';
-                let context = "";
-                try {
-                    const searchRes = await fetch("https://api.tavily.com/search", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ api_key: TAVILY_API_KEY, query: text, search_depth: "basic", max_results: 3 })
-                    });
-                    const searchData = await searchRes.json();
-                    if (searchData.results) context = searchData.results.map(r => `Source: ${r.url}\nContent: ${r.content}`).join("\n\n");
-                } catch (err) { console.error("Search failed", err); }
-
-                if (context) {
-                    const searchContextPrompt = { role: "system", content: `You have access to the internet. Use the following live search results to answer the user's query accurately. If the results aren't relevant, ignore them:\n\n${context}` };
-                    const lastMsg = payloadHistory.pop();
-                    payloadHistory.push(searchContextPrompt);
-                    payloadHistory.push(lastMsg);
+                if (!response.ok) {
+                    const errBody = await response.json().catch(() => ({}));
+                    // If it's a rate limit, the error message will now actually tell you!
+                    throw new Error(errBody.error?.message || `HTTP ${response.status}`);
                 }
-            }
-
-            typing.innerHTML = '<div class="flex gap-1 p-4 ml-10"><div class="typing-dot w-1.5 h-1.5 bg-gray-400 rounded-full"></div><div class="typing-dot w-1.5 h-1.5 bg-gray-400 rounded-full" style="animation-delay: 0.2s"></div><div class="typing-dot w-1.5 h-1.5 bg-gray-400 rounded-full" style="animation-delay: 0.4s"></div></div>';
-
-            let aiText = null;
-
-            // 3. FINAL GENERATION
-            try {
-                const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` },
-                    body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: payloadHistory, stream: true, temperature: dynamicTemp })
-                });
-
-                if (!response.ok) throw new Error("Groq API Connection Error");
 
                 typing.remove(); 
                 const msgNode = appendMessageUI('assistant', ""); 
@@ -490,7 +445,6 @@ Your goal is to address the user's true intent with clarity. Stay in character a
                 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder("utf-8");
-                aiText = "";
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -503,7 +457,7 @@ Your goal is to address the user's true intent with clarity. Stay in character a
                         if (line.trim().startsWith('data: ') && !line.includes('[DONE]')) {
                             try {
                                 const dataObj = JSON.parse(line.replace('data: ', ''));
-                                if (dataObj.choices[0].delta && dataObj.choices[0].delta.content) {
+                                if (dataObj.choices[0].delta?.content) {
                                     aiText += dataObj.choices[0].delta.content;
                                     contentArea.innerHTML = formatMarkdown(aiText);
                                     document.getElementById('chat-container').scrollTo({ top: messagesDiv.scrollHeight });
@@ -514,8 +468,9 @@ Your goal is to address the user's true intent with clarity. Stay in character a
                 }
             } catch (err) {
                 typing.remove();
-                console.error(err);
-                appendMessageUI('assistant', "Connection error or invalid Groq token. Please check your network.");
+                console.error("API Failure:", err);
+                // This will now show "Rate limit reached" or "Overloaded" instead of a generic error
+                appendMessageUI('assistant', `⚠️ **Connection Error:** ${err.message}.`);
             }
 
             if (aiText) {
