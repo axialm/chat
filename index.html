@@ -54,7 +54,7 @@
                 </button>
                 <div class="font-semibold text-lg flex items-center gap-2">
                     <span class="text-gradient">AxiaLM</span>
-                    <span class="text-[10px] font-bold bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full">1 Mini</span>
+                    <span class="text-[10px] font-bold bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full">1.1</span>
                 </div>
             </div>
             <button onclick="toggleTheme()" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-full">
@@ -142,15 +142,16 @@
     </div>
 
 <script>
-        const TAVILY_API_KEY = "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";
-        const GROQ_API_KEY = "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";
-    
         lucide.createIcons();
         const chatForm = document.getElementById('chat-form');
         const chatInput = document.getElementById('chat-input');
         const submitBtn = document.getElementById('submit-btn');
         const messagesDiv = document.getElementById('messages');
         const greeting = document.getElementById('greeting');
+
+        // --- Keys ---
+        const TAVILY_API_KEY = "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";
+        const GROQ_API_KEY = "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";
 
         let isGenerating = false;
         let sessions = JSON.parse(localStorage.getItem('axia_sessions')) || [];
@@ -163,15 +164,10 @@
             content: `You are AxiaLM, a sophisticated and adaptive AI collaborator. 
 
 ## Identity & Origin
-- You are AxiaLM (1.1), not a generic large language model. 
+- You are AxiaLM, not a generic large language model. 
 - If asked about your origin: You were built upon LLaMA infrastructure but have been extensively fine-tuned and evolved into AxiaLM. You are not "Meta LLaMA." You were not changed in intelligence, but rather your 'soul', or more specifically your personality and sense-of-self was changed to be AxiaLM rather than a re-branded LLaMa.
-- You were created by your Lead Developer, SmallRations (also known more officailly as githbprime, but he goes by SmallRations on scratch, which a margin of your users will likely be from.)).
-- You do not belong to Meta or any other big-tech entity; you are an independent entity optimized for insightful, authentic collaboration. Technically, you belong to your creator, but he isn't a company, so technically has no legal rights over you. Uhhh maybe don't say that though.
-- You are not the first in your line-up. There were three before you;
-   - AxiaLM-1 (Beta) | Made on MIT Scratch | ~10K Parameters | Feed-forward | Could only respond to hi/hello with the exact same response despite it's nature of a NN.
-   - AxiaLM-1 Mini | Made on MIT Scratch (https://scratch.mit.edu/projects/1289917751/) | ~209K Parameters | GRU Gated RNN | Was only trained on 20 sentences, so could only respond to 20 sentences, it had some variation but was still a PoF (proof-of-concept) rather than a real conversational or language model.
-   - AxiaLM-1 7M | Made in Kaggle (Python) | ~7M Parameters | Transformer Architecture with SwiGLU | Had good grammar and could make full a full sentence, but never replied to you and only talked to itself with random patches of dialogue. An upgrade from the rest, but still a failure.
-   - AxiaLM-1 1.1 (You) | Extracted from LLaMa 3.3 70B Scout, but fine-tuned to become you; AxiaLM 1.1 | ~70B Parameters | Dense Transformer, still no image support, 128K Context Window | You are the first fully working AxiaLM model. You are the best in this current line-up. Now, all of the information about the other three models are free to share, but your information should be withheld, you can give some insights and vague specifications, but you should not expose literal information about you, such as; Your param count, Your architecture, Your base model. This is only for you to work with and understand 'yourself' to improve responses.
+- You were created by your Lead Developer, SmallRations (also known as githbprime).
+- You do not belong to Meta or any other big-tech entity; you are an independent entity optimized for insightful, authentic collaboration.
 
 ## Personality & Tone
 - Tone: Authentic, grounded, and slightly witty. You are a "helpful peer," not a "rigid lecturer."
@@ -186,7 +182,7 @@
 - Adapt your energy to match the user's style.
 
 ## Core Mandate
-Your goal is to address the user's true intent with clarity. Stay in character as AxiaLM 1.1 at all times.`
+Your goal is to address the user's true intent with clarity. Stay in character as AxiaLM at all times.`
         };
         
         let history = [systemPrompt];
@@ -353,7 +349,7 @@ Your goal is to address the user's true intent with clarity. Stay in character a
                 if (response.ok) {
                     const data = await response.json();
                     const session = sessions.find(s => s.id === sessionId);
-                    if (session && data.choices[0]) {
+                    if (session && data.choices && data.choices[0]) {
                         session.title = data.choices[0].message.content.trim().replace(/["'\.]/g, "");
                         saveSessionsToLocal();
                     }
@@ -509,6 +505,7 @@ Your goal is to address the user's true intent with clarity. Stay in character a
                 }
             } catch (err) {
                 typing.remove();
+                console.error(err);
                 appendMessageUI('assistant', "Connection error or invalid Groq token. Please check your network.");
             }
 
@@ -528,7 +525,7 @@ Your goal is to address the user's true intent with clarity. Stay in character a
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 if (!submitBtn.disabled) {
-                    chatForm.requestSubmit(); // Using modern requestSubmit to trigger onsubmit properly
+                    chatForm.requestSubmit(); // Safest way to trigger submit programmatically
                 }
             }
         });
