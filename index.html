@@ -217,6 +217,16 @@
             // Inline Math: \( ... \)
             processed = processed.replace(/\\\((.*?)\\\)/g, '<span class="text-indigo-600 dark:text-indigo-400 font-mono bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded text-[13.5px]">$1</span>');
 
+            // 4.6. Horizontal Rules (---)
+            // This turns three dashes on a new line into a clean dividing line
+            processed = processed.replace(/^---+\s*$/gm, '<hr class="border-[#e6e4df] dark:border-[#333] my-6">');
+
+            // 4.7. Quick Math Symbol Hacks (Band-aids for common LaTeX)
+            // Replaces \times with a real multiplication sign
+            processed = processed.replace(/\\times/g, '×'); 
+            // Replaces \boxed{...} with a little border around the text
+            processed = processed.replace(/\\boxed{(.*?)}/g, '<span class="border border-gray-400 dark:border-gray-600 px-1.5 py-0.5 rounded shadow-sm">$1</span>');
+
             // 5. Lists (Bullets and Numbers)
             processed = processed.replace(/^[\-\*]\s+(.*$)/gim, '<li class="ml-5 list-disc mb-1.5">$1</li>');
             processed = processed.replace(/^\d+\.\s+(.*$)/gim, '<li class="ml-5 list-decimal mb-1.5">$1</li>');
