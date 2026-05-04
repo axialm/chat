@@ -459,6 +459,7 @@
         }
 
         // --- Submit Logic ---
+// --- Submit Logic ---
         const TAVILY_API_KEY = "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";
 
         chatForm.onsubmit = async (e) => {
@@ -489,53 +490,89 @@
             currentSession.history = [...history];
             saveSessionsToLocal();
 
-            // Trigger AI to name the chat immediately in background
             if (isFirstMessage) {
                 generateChatTitle(currentSessionId, text);
             }
 
-            // Buffer Animation - Start with Web Search status
+            // Buffer Animation - Start with decision status
             const typing = document.createElement('div');
             typing.id = 'typing-buffer';
-            typing.innerHTML = '<div class="ml-12 shiny-text text-sm italic py-4 animate-pulse">Searching the web...</div>';
+            typing.innerHTML = '<div class="ml-12 shiny-text text-sm italic py-4 animate-pulse">Thinking...</div>';
             messagesDiv.appendChild(typing);
             document.getElementById('chat-container').scrollTo({ top: messagesDiv.scrollHeight, behavior: 'smooth' });
 
-            // --- TAVILY WEB SEARCH ---
-            let context = "";
+            // --- 1. AI PRE-CHECK: DOES IT NEED TO SEARCH? ---
+            let needsSearch = false;
             try {
-                const searchRes = await fetch("https://api.tavily.com/search", {
+                const checkEndpoint = useNetlify ? "/.netlify/functions/chat" : "https://models.inference.ai.azure.com/chat/completions";
+                const checkHeaders = useNetlify 
+                    ? { "Content-Type": "application/json" } 
+                    : { "Content-Type": "application/json", "Authorization": `Bearer ${GITHUB_TOKEN}` };
+                
+                const checkRes = await fetch(checkEndpoint, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: checkHeaders,
                     body: JSON.stringify({
-                        api_key: TAVILY_API_KEY,
-                        query: text,
-                        search_depth: "basic",
-                        max_results: 3
+                        model: "gpt-4o-mini",
+                        messages: [
+                            { role: "system", content: "You are a router. Evaluate if the user's query requires live internet access to answer correctly (e.g., current events, exact pricing, highly specific recent facts). Reply ONLY with the word YES or NO." },
+                            { role: "user", content: text }
+                        ],
+                        temperature: 0, // Keep it deterministic
+                        max_tokens: 5
                     })
                 });
-                const searchData = await searchRes.json();
-                if (searchData.results) {
-                    context = searchData.results.map(r => `Source: ${r.url}\nContent: ${r.content}`).join("\n\n");
+
+                const checkData = await checkRes.json();
+                let decision = "";
+                
+                if (useNetlify && checkData.choices) decision = checkData.choices[0].message.content;
+                else if (!useNetlify && checkData.choices) decision = checkData.choices[0].message.content;
+                
+                if (decision && decision.toUpperCase().includes("YES")) {
+                    needsSearch = true;
                 }
             } catch (err) {
-                console.error("Search failed", err);
+                console.error("Search decision failed, skipping search", err);
             }
 
-            // Prepare the payload (so we don't save the massive search text to local storage)
+            // --- 2. TAVILY WEB SEARCH (Only if needsSearch is true) ---
             let payloadHistory = [...history];
-            if (context) {
-                const searchContextPrompt = {
-                    role: "system",
-                    content: `You have access to the internet. Use the following live search results to answer the user's query accurately. If the search results aren't relevant to the prompt, ignore them:\n\n${context}`
-                };
-                // Pop the user's message, insert the context, then put the user's message back
-                const lastMsg = payloadHistory.pop();
-                payloadHistory.push(searchContextPrompt);
-                payloadHistory.push(lastMsg);
+            
+            if (needsSearch) {
+                typing.innerHTML = '<div class="ml-12 shiny-text text-sm italic py-4 animate-pulse">Searching the web...</div>';
+                let context = "";
+                try {
+                    const searchRes = await fetch("https://api.tavily.com/search", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            api_key: TAVILY_API_KEY,
+                            query: text,
+                            search_depth: "basic",
+                            max_results: 3
+                        })
+                    });
+                    const searchData = await searchRes.json();
+                    if (searchData.results) {
+                        context = searchData.results.map(r => `Source: ${r.url}\nContent: ${r.content}`).join("\n\n");
+                    }
+                } catch (err) {
+                    console.error("Search failed", err);
+                }
+
+                if (context) {
+                    const searchContextPrompt = {
+                        role: "system",
+                        content: `You have access to the internet. Use the following live search results to answer the user's query accurately. If the results aren't relevant, ignore them:\n\n${context}`
+                    };
+                    const lastMsg = payloadHistory.pop();
+                    payloadHistory.push(searchContextPrompt);
+                    payloadHistory.push(lastMsg);
+                }
             }
 
-            // Switch to normal typing dots
+            // Switch to normal typing dots for final generation
             typing.innerHTML = '<div class="flex gap-1 p-4 ml-10"><div class="typing-dot w-1.5 h-1.5 bg-gray-400 rounded-full"></div><div class="typing-dot w-1.5 h-1.5 bg-gray-400 rounded-full" style="animation-delay: 0.2s"></div><div class="typing-dot w-1.5 h-1.5 bg-gray-400 rounded-full" style="animation-delay: 0.4s"></div></div>';
 
             let aiText = null;
@@ -545,7 +582,7 @@
                 try {
                     const response = await fetch("/.netlify/functions/chat", {
                         method: "POST",
-                        body: JSON.stringify({ messages: payloadHistory }) // USING PAYLOAD HISTORY
+                        body: JSON.stringify({ messages: payloadHistory })
                     });
 
                     if (!response.ok) throw new Error("Netlify block or error");
@@ -591,7 +628,7 @@
                     const response = await fetch("https://models.inference.ai.azure.com/chat/completions", {
                         method: "POST",
                         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GITHUB_TOKEN}` },
-                        body: JSON.stringify({ model: "gpt-4o-mini", messages: payloadHistory, stream: true }) // USING PAYLOAD HISTORY
+                        body: JSON.stringify({ model: "gpt-4o-mini", messages: payloadHistory, stream: true })
                     });
 
                     if (!response.ok) throw new Error("API Connection Error");
