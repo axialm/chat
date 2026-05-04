@@ -210,6 +210,13 @@
             // 4. Inline Code
             processed = processed.replace(/`([^`]+)`/g, '<code class="bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[13.5px] text-pink-600 dark:text-pink-400 font-mono">$1</code>');
 
+            // 4.5. Math Blocks
+            // Block Math: \[ ... \]
+            processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, '<div class="bg-gray-100 dark:bg-[#2d2d2d] p-4 rounded-xl my-4 text-center font-mono overflow-x-auto text-[14px] shadow-inner border border-gray-200 dark:border-gray-700">$1</div>');
+            
+            // Inline Math: \( ... \)
+            processed = processed.replace(/\\\((.*?)\\\)/g, '<span class="text-indigo-600 dark:text-indigo-400 font-mono bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded text-[13.5px]">$1</span>');
+
             // 5. Lists (Bullets and Numbers)
             processed = processed.replace(/^[\-\*]\s+(.*$)/gim, '<li class="ml-5 list-disc mb-1.5">$1</li>');
             processed = processed.replace(/^\d+\.\s+(.*$)/gim, '<li class="ml-5 list-decimal mb-1.5">$1</li>');
