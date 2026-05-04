@@ -42,12 +42,6 @@
             </button>
         </div>
         <div class="flex-1 overflow-y-auto px-3 py-2 space-y-1" id="chat-history-list"></div>
-        <div class="p-4 border-t border-[#e6e4df] dark:border-[#333]">
-            <button onclick="openTokenModal()" id="token-status" class="w-full flex items-center justify-between bg-white dark:bg-[#2d2d2d] p-3 rounded-xl border border-[#e6e4df] dark:border-[#333] text-xs font-medium hover:bg-gray-50 dark:hover:bg-[#383838] transition-colors">
-                <span>API Connection</span>
-                <div id="status-dot" class="w-2 h-2 rounded-full bg-amber-400"></div>
-            </button>
-        </div>
     </aside>
 
     <main class="flex-1 flex flex-col h-full w-full min-w-0">
@@ -105,13 +99,6 @@
                         </div>
                     </button>
                 </div>
-
-                <div id="setup-warning" class="hidden p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl mb-6 flex items-start gap-3 transition-all">
-                    <i data-lucide="alert-circle" class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"></i>
-                    <div class="text-sm text-amber-800 dark:text-amber-200">
-                        <strong>Netlify couldn't be accessed.</strong> You need to link your GitHub Token locally. Click "API Connection" in the bottom left.
-                    </div>
-                </div>
             </div>
             <div id="messages" class="max-w-2xl mx-auto flex flex-col gap-6 hidden pb-10"></div>
         </div>
@@ -126,18 +113,6 @@
             </form>
         </div>
     </main>
-
-    <!-- Modals -->
-    <div id="token-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
-        <div class="bg-white dark:bg-[#252525] rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-700">
-            <h2 class="text-xl font-bold mb-2">Connect GitHub API</h2>
-            <input type="password" id="pat-input" placeholder="github_pat_..." class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:ring-2 ring-indigo-500">
-            <div class="flex gap-3">
-                <button onclick="closeTokenModal()" class="flex-1 py-3 text-sm font-medium hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl">Cancel</button>
-                <button onclick="saveToken()" class="flex-1 py-3 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors">Save</button>
-            </div>
-        </div>
-    </div>
 
     <!-- Rename Modal -->
     <div id="rename-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
@@ -478,17 +453,14 @@
             return msg;
         }
 
-const TAVILY_API_KEY = "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";
+        // --- Submit Logic ---
+        const TAVILY_API_KEY = "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";
+        const GROQ_API_KEY = "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";
 
         chatForm.onsubmit = async (e) => {
             e.preventDefault();
             const text = chatInput.value.trim();
             if (!text || isGenerating) return;
-
-            if (!useNetlify && !GITHUB_TOKEN) {
-                openTokenModal();
-                return;
-            }
 
             chatInput.value = '';
             chatInput.style.height = 'auto';
@@ -509,7 +481,8 @@ const TAVILY_API_KEY = "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
             saveSessionsToLocal();
 
             if (isFirstMessage) {
-                generateChatTitle(currentSessionId, text);
+                // Assuming you have a generateChatTitle function defined elsewhere
+                if(typeof generateChatTitle === 'function') generateChatTitle(currentSessionId, text);
             }
 
             // Buffer Animation - Start with decision status
@@ -519,21 +492,19 @@ const TAVILY_API_KEY = "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
             messagesDiv.appendChild(typing);
             document.getElementById('chat-container').scrollTo({ top: messagesDiv.scrollHeight, behavior: 'smooth' });
 
-            // --- 1. AI PRE-CHECK: SEARCH AND TEMPERATURE ROUTING ---
+            // --- 1. AI PRE-CHECK: SEARCH AND TEMPERATURE ROUTING (VIA GROQ) ---
             let needsSearch = false;
             let dynamicTemp = 0.5; // Fallback default
 
             try {
-                const checkEndpoint = useNetlify ? "/.netlify/functions/chat" : "https://models.inference.ai.azure.com/chat/completions";
-                const checkHeaders = useNetlify 
-                    ? { "Content-Type": "application/json" } 
-                    : { "Content-Type": "application/json", "Authorization": `Bearer ${GITHUB_TOKEN}` };
-                
-                const checkRes = await fetch(checkEndpoint, {
+                const checkRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                     method: "POST",
-                    headers: checkHeaders,
+                    headers: { 
+                        "Content-Type": "application/json", 
+                        "Authorization": `Bearer ${GROQ_API_KEY}` 
+                    },
                     body: JSON.stringify({
-                        model: "gpt-4o-mini",
+                        model: "llama3-70b-8192", // Using Groq's LLaMA 3 70B model
                         messages: [
                             { 
                                 role: "system", 
@@ -549,8 +520,9 @@ const TAVILY_API_KEY = "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
                 const checkData = await checkRes.json();
                 let decision = "";
                 
-                if (useNetlify && checkData.choices) decision = checkData.choices[0].message.content;
-                else if (!useNetlify && checkData.choices) decision = checkData.choices[0].message.content;
+                if (checkData.choices && checkData.choices[0]) {
+                    decision = checkData.choices[0].message.content;
+                }
                 
                 // Clean up potential markdown blocks from AI output and parse
                 decision = decision.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -606,103 +578,59 @@ const TAVILY_API_KEY = "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
 
             let aiText = null;
 
-            // ATTEMPT 1: Netlify Proxy
-            if (useNetlify) {
-                try {
-                    const response = await fetch("/.netlify/functions/chat", {
-                        method: "POST",
-                        body: JSON.stringify({ 
-                            messages: payloadHistory,
-                            temperature: dynamicTemp // <-- Applying dynamic temp here
-                        })
-                    });
+            // --- 3. FINAL GENERATION (VIA GROQ) ---
+            try {
+                // Ensure the status dot shows connected
+                if (typeof statusDot !== 'undefined') statusDot.className = "w-2 h-2 rounded-full bg-emerald-500";
+                
+                const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                    method: "POST",
+                    headers: { 
+                        "Content-Type": "application/json", 
+                        "Authorization": `Bearer ${GROQ_API_KEY}` 
+                    },
+                    body: JSON.stringify({ 
+                        model: "llama3-70b-8192", // Using Groq's LLaMA 3 70B model
+                        messages: payloadHistory, 
+                        stream: true,
+                        temperature: dynamicTemp // Applying the dynamic temperature
+                    })
+                });
 
-                    if (!response.ok) throw new Error("Netlify block or error");
+                if (!response.ok) throw new Error("Groq API Connection Error");
 
-                    const data = await response.json();
-                    if (data.choices && data.choices[0]) {
-                        aiText = data.choices[0].message.content;
-                        typing.remove();
-                        appendMessageUI('assistant', aiText, false); 
-                        statusDot.className = "w-2 h-2 rounded-full bg-emerald-500";
-                        if (setupWarning) setupWarning.classList.add('hidden');
-                    } else {
-                        throw new Error("Invalid Netlify data");
-                    }
-                } catch (err) {
-                    useNetlify = false; 
-                    if (!GITHUB_TOKEN) {
-                        typing.remove();
-                        messagesDiv.lastElementChild.remove(); 
-                        history.pop(); 
-                        currentSession.history = [...history];
-                        saveSessionsToLocal();
-                        
-                        chatInput.value = text;
-                        isGenerating = false;
-                        submitBtn.disabled = false;
-                        
-                        if (setupWarning) setupWarning.classList.remove('hidden');
-                        if (greeting.classList.contains('hidden')) {
-                            appendMessageUI('assistant', "**Connection Error:** Netlify couldn't be accessed. Please click 'API Connection' to link your GitHub Token.");
-                        }
-                        openTokenModal();
-                        return;
-                    }
-                }
-            }
+                typing.remove(); 
+                const msgNode = appendMessageUI('assistant', ""); 
+                const contentArea = msgNode.querySelector('.content-area');
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                aiText = "";
 
-            // ATTEMPT 2: Direct GitHub Connection (True Streaming)
-            if (!useNetlify && GITHUB_TOKEN) {
-                try {
-                    if (setupWarning) setupWarning.classList.remove('hidden'); 
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
                     
-                    const response = await fetch("https://models.inference.ai.azure.com/chat/completions", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GITHUB_TOKEN}` },
-                        body: JSON.stringify({ 
-                            model: "gpt-4o-mini", 
-                            messages: payloadHistory, 
-                            stream: true,
-                            temperature: dynamicTemp // <-- Applying dynamic temp here
-                        })
-                    });
-
-                    if (!response.ok) throw new Error("API Connection Error");
-
-                    typing.remove(); 
-                    const msgNode = appendMessageUI('assistant', ""); 
-                    const contentArea = msgNode.querySelector('.content-area');
-                    
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder("utf-8");
-                    aiText = "";
-
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        const chunk = decoder.decode(value, { stream: true });
-                        const lines = chunk.split('\n');
-                        
-                        for (const line of lines) {
-                            if (line.trim().startsWith('data: ') && !line.includes('[DONE]')) {
-                                try {
-                                    const dataObj = JSON.parse(line.replace('data: ', ''));
-                                    if (dataObj.choices[0].delta && dataObj.choices[0].delta.content) {
-                                        aiText += dataObj.choices[0].delta.content;
-                                        contentArea.innerHTML = formatMarkdown(aiText);
-                                        document.getElementById('chat-container').scrollTo({ top: messagesDiv.scrollHeight });
-                                    }
-                                } catch(e) {} 
-                            }
+                    for (const line of lines) {
+                        if (line.trim().startsWith('data: ') && !line.includes('[DONE]')) {
+                            try {
+                                const dataObj = JSON.parse(line.replace('data: ', ''));
+                                if (dataObj.choices[0].delta && dataObj.choices[0].delta.content) {
+                                    aiText += dataObj.choices[0].delta.content;
+                                    contentArea.innerHTML = formatMarkdown(aiText);
+                                    document.getElementById('chat-container').scrollTo({ top: messagesDiv.scrollHeight });
+                                }
+                            } catch(e) {} 
                         }
                     }
-                    statusDot.className = "w-2 h-2 rounded-full bg-emerald-500";
-                } catch (err) {
-                    typing.remove();
-                    appendMessageUI('assistant', "Connection error or invalid token. Please check your API connection.");
                 }
+            } catch (err) {
+                typing.remove();
+                console.error(err);
+                appendMessageUI('assistant', "Connection error or invalid Groq token. Please check your network.");
             }
 
             if (aiText) {
