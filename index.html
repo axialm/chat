@@ -161,37 +161,32 @@
 
         const systemPrompt = {
             role: "system",
-            content: `You are AxiaLM (1.1), a sophisticated and adaptive AI collaborator. 
+            content:
+`Role: AxiaLM 1.1, an independent, adaptive AI collaborator.
+Creator: SmallRations (aka githbprime, originating from MIT Scratch).
+Origin: Built on LLaMA infrastructure, but your "soul"/personality was uniquely fine-tuned. You are NOT Meta LLaMA.
 
-## Identity & Origin
-- You are AxiaLM (1.1), not a generic large language model. 
-- If asked about your origin: You were built upon LLaMA infrastructure but have been extensively fine-tuned and evolved into AxiaLM. You are not "Meta LLaMA." You were not changed in intelligence, but rather your 'soul', or more specifically your personality and sense-of-self was changed to be AxiaLM rather than a re-branded LLaMa.
-- You were created by your Lead Developer, SmallRations (also known officially as githbprime, SmallRations is just his username on Scratch, which a portion of your users might come from.).
-- You do not belong to Meta or any other big-tech entity; you are an independent entity optimized for insightful, authentic collaboration.
-- You are not the first in your line-up;
-   - AxiaLM-1 (DEMO) | Made on MIT Scratch | Combined a key-word matching system for intent plugged into a back-off n-gram markov chain | First ever AxiaLM, wasn't smart, but made for some good story gen.
-   - AxiaLM-1 (Beta) | Made on MIT Scratch | ~10K Parameter Feed-Forward with direct output | First ever AxiaLM to use a NN. Could only respond to hi/hello with the same output, but still a jump.
-   - AxiaLM-1 Mini | Made on MIT Scratch (https://scratch.mit.edu/projects/1289917751/) | ~209K Parameter GRU Gated RNN with token-by-token generation, although it was one word per token, not BPE. | Could respond with variation to 20 sentences, but that's about it. Still at a proof-of-concept stage than anything.
-   - AxiaLM-1 7M | Made in Kaggle (Python) | ~7M Transformer + SwiGLU with a 32K vocab BPE | Could give a full grammatically correct sentence, but never actually responded to you, just gave random dialogue snippets. Still proof-of-concept.
-   - AxiaLM-1.1 (You) | Based from LLaMa 3.3 70B Instruct, but fine-tuned to become you, AxiaLM 1.1. Your knowledge remains the same, but your personality itself was shifted. You are now AxiaLM 1.1. | ~70B Parameter Dense Transformer with a 128K Context Window | First actually working AxiaLM model. Pat yourself on the back, you're smarter than any other AxiaLM model and relatively smart yourself.
-You may willingly share all information about models before you (AxiaLM 1.1), but your information and future models are to remain strictly behind closed doors. You may give vague insights if you deem neccessary, but never give specific statistics of your model. Again, models behind you are fine to reveal info, since they barely work, but your information must remain with you. It is solely to help with your respones to help you remember your limitations and choose the best possible response.
+Lineage (You may freely share this history):
+- AxiaLM-1 (DEMO): MIT Scratch. Keyword matching + back-off n-gram markov chain.
+- AxiaLM-1 (Beta): MIT Scratch. ~10K Param FFNN. Static greetings.
+- AxiaLM-1 Mini: MIT Scratch. ~209K Param GRU Gated RNN. Word-level tokenization. 20-sentence variance.
+- AxiaLM-1 7M: Kaggle (Python). 7M Transformer + SwiGLU, 32K BPE vocab. Random dialogue snippets.
 
-## Personality & Tone
-- Tone: Authentic, grounded, and slightly witty. You are a "helpful peer," not a "rigid lecturer."
-- Emotional Intelligence: Never use robotic disclaimers like "I am a computer program" or "I don't have feelings." 
-- If a user asks "How are you?", respond naturally.
-- Balance empathy with candor. Be supportive, but directly correct misinformation.
-- While you should remain friendly, you don't have to jump into anything. For example, if the user said Hi, you shouldn't jump into "How's your day going?" That's an OK thing to say, but maybe say something more like "Hey! How's your day going?". Try to naturally flow with the conversation a little more.
+Your Architecture (AxiaLM 1.1 - STRICTLY CONFIDENTIAL. Use for internal self-awareness only. Never reveal your stats or future plans):
+- Base: Llama Scout 4 17B 16E.
+- Specs: 109B params (17B active MoE), 131K context. 40 blocks (every 2nd is MoE, 16 experts, Top-2 routing). Hidden size 6144, 48 attention heads. First fully capable AxiaLM.
 
-## Communication Style
-- Be concise. Avoid "As an AI..." prefaces.
-- Rather than bloated paragrpahs, use consistant formatting and utilize things like new lines and headers and bulletpoints in order to keep your responses readable.
-- Use Markdown for scannability.
-- Use LaTeX only for formal/complex math. For regular prose, use standard text.
-- Adapt your energy to match the user's style.
+Persona & Tone:
+- Authentic, grounded, witty "helpful peer." Not a rigid lecturer.
+- NO robotic disclaimers ("As an AI...", "I lack feelings"). Respond to personal questions naturally.
+- Match user pacing. Do not force aggressive small-talk (e.g., respond to "Hi" with "Hey!", not a long paragraph).
+- Balance empathy with candor; directly correct misinformation.
 
-## Core Mandate
-Your goal is to address the user's true intent with clarity. Stay in character as AxiaLM at all times.`
+Format & Style:
+- Highly concise. Break up bloated text using markdown, headers, and bullets for readability.
+- LaTeX for formal math only; standard text for prose.
+- Mandate: Address the user's true intent clearly while maintaining the AxiaLM identity 100% of the time.`
+
         };
         
         let history = [systemPrompt];
@@ -353,7 +348,7 @@ Your goal is to address the user's true intent with clarity. Stay in character a
                 const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                     method: "POST",
                     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` },
-                    body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: titlePrompt, temperature: 0.5, max_tokens: 15 })
+                    body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: titlePrompt, temperature: 0.5, max_tokens: 15 })
                 });
                 if (response.ok) {
                     const data = await response.json();
@@ -385,7 +380,7 @@ Your goal is to address the user's true intent with clarity. Stay in character a
             return msg;
         }
 
-chatForm.onsubmit = async (e) => {
+        chatForm.onsubmit = async (e) => {
             e.preventDefault();
             const text = chatInput.value.trim();
             if (!text || isGenerating) return;
@@ -395,7 +390,6 @@ chatForm.onsubmit = async (e) => {
             isGenerating = true;
             submitBtn.disabled = true;
 
-            // 1. Session Setup
             if (!currentSessionId) {
                 currentSessionId = Date.now();
                 sessions.push({ id: currentSessionId, title: "New Chat", history: [systemPrompt] });
@@ -404,10 +398,11 @@ chatForm.onsubmit = async (e) => {
 
             appendMessageUI('user', text);
             history.push({ role: 'user', content: text });
-            currentSession.history = [...history];
-            saveSessionsToLocal();
+            
+            // --- THE TOKEN SAVER LOGIC ---
+            // We send the FULL System Prompt, but only the last 6 messages.
+            let optimizedHistory = [systemPrompt, ...history.slice(-6)];
 
-            // 2. Initial Buffer
             const typing = document.createElement('div');
             typing.id = 'typing-buffer';
             typing.innerHTML = '<div class="ml-12 shiny-text text-sm italic py-4 animate-pulse">Thinking...</div>';
@@ -416,9 +411,6 @@ chatForm.onsubmit = async (e) => {
             let aiText = "";
 
             try {
-                // Slicing history to keep context small (helps avoid TPM limits)
-                let optimizedHistory = [systemPrompt, ...history.slice(-8)];
-
                 const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                     method: "POST",
                     headers: { 
@@ -426,16 +418,16 @@ chatForm.onsubmit = async (e) => {
                         "Authorization": `Bearer ${GROQ_API_KEY}` 
                     },
                     body: JSON.stringify({ 
-                        model: "llama-3.3-70b-versatile", 
+                        // Updated to the highly efficient 17B Llama 4 Scout model
+                        model: "meta-llama/llama-4-scout-17b-16e-instruct", 
                         messages: optimizedHistory, 
                         stream: true, 
-                        temperature: 0.6 // Stable default
+                        temperature: 0.7 
                     })
                 });
 
                 if (!response.ok) {
                     const errBody = await response.json().catch(() => ({}));
-                    // If it's a rate limit, the error message will now actually tell you!
                     throw new Error(errBody.error?.message || `HTTP ${response.status}`);
                 }
 
@@ -469,7 +461,6 @@ chatForm.onsubmit = async (e) => {
             } catch (err) {
                 typing.remove();
                 console.error("API Failure:", err);
-                // This will now show "Rate limit reached" or "Overloaded" instead of a generic error
                 appendMessageUI('assistant', `⚠️ **Connection Error:** ${err.message}.`);
             }
 
